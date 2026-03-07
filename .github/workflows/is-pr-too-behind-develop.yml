@@ -39,7 +39,6 @@ jobs:
         run: |
           commits_behind=${{ steps.commits_behind.outputs.commits_behind }}
           max_commits_behind=30
-
           if [ "$commits_behind" -gt "$max_commits_behind" ]; then
             echo "❌ This PR is behind 'develop' by $commits_behind commits (maximum allowed: $max_commits_behind)."
             echo "Please update your branch with the latest 'develop' before merging."

@@ -3,9 +3,10 @@ name: Check PR title
 on:
   pull_request:
     types:
-      - reopened
       - opened
+      - reopened
       - edited
+      - synchronize
 
 jobs:
   validate_title:

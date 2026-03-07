@@ -8,13 +8,17 @@ on:
 
 jobs:
   remind_squash_merge:
+    name: Squash merge reminder
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - uses: actions/github-script@v6
-        id: my-script
+      - name: Post merge reminder comment
+        uses: actions/github-script@v6
         with:
           result-encoding: string
           retries: 3
@@ -35,17 +39,22 @@ jobs:
 
             if (isFeature || isFix) {
               defaultContent.body = "🔀 **Merge reminder**\n\nThis PR is from a `feature/*` or `fix/*` branch.\nMerge using **Squash & merge** to keep a clean history in `develop`.";
-              github.rest.issues.createComment(defaultContent);
+              await github.rest.issues.createComment(defaultContent);
             }
             if (isHotfix) {
               defaultContent.body = "🚨 **Merge reminder**\n\nThis PR is from a `hotfix/*` branch.\nMerge using **Squash & merge** into `develop` (and into `master` if applicable).";
-              github.rest.issues.createComment(defaultContent);
+              await github.rest.issues.createComment(defaultContent);
             }
             if (isRelease) {
               defaultContent.body = "🚀 **Merge reminder**\n\nThis PR is from a `release/*` branch.\nMerge using **Merge commit** (not squash) to preserve the full release history in `master`.";
-              github.rest.issues.createComment(defaultContent);
+              await github.rest.issues.createComment(defaultContent);
             }
             if (isBackport) {
               defaultContent.body = "🔙 **Merge reminder**\n\nThis PR is from a `backport/*` branch.\nMerge using **Merge commit** to preserve the original commits being backported.";
-              github.rest.issues.createComment(defaultContent);
+              await github.rest.issues.createComment(defaultContent);
             }
+
+            console.log("✅ Reminder check complete.");
+
+      - name: Done
+        run: echo "✅ Squash merge reminder complete."

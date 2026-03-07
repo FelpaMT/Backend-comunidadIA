@@ -1,0 +1,46 @@
+name: Fail if PR is too Behind 'develop'
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+    branches:
+      - develop
+
+jobs:
+  check-behind:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR branch with full history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Fetch all remote branches
+        run: git fetch --all
+
+      - name: Check number of commits PR is behind develop
+        id: commits_behind
+        run: |
+          COMMITS_BEHIND=$(git rev-list --count HEAD..origin/develop)
+          echo "This PR is behind develop by $COMMITS_BEHIND commits."
+          echo "commits_behind=$COMMITS_BEHIND" >> "$GITHUB_OUTPUT"
+
+      - name: Fail if too many commits behind
+        run: |
+          commits_behind=${{ steps.commits_behind.outputs.commits_behind }}
+          max_commits_behind=30
+
+          if [ "$commits_behind" -gt "$max_commits_behind" ]; then
+            echo "❌ This PR is behind 'develop' by $commits_behind commits (maximum allowed: $max_commits_behind)."
+            echo "Please update your branch with the latest 'develop' before merging."
+            exit 1
+          else
+            echo "✅ This PR is up to date with 'develop' or within the allowed commit range."
+          fi

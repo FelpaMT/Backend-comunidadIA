@@ -1,0 +1,72 @@
+name: Check PR title
+
+on:
+  pull_request:
+    types:
+      - reopened
+      - opened
+      - edited
+
+jobs:
+  validate_title:
+    name: Pull Request conventional commit linter
+    runs-on: ubuntu-latest
+    if: |
+      startsWith(github.head_ref, 'feature/') ||
+      startsWith(github.head_ref, 'fix/') ||
+      startsWith(github.head_ref, 'release/') ||
+      startsWith(github.head_ref, 'hotfix/') ||
+      startsWith(github.head_ref, 'backport/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Evaluate title prefix
+        id: evaluate
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "Validating: $PR_TITLE"
+
+          STATUS=$(
+            echo "$PR_TITLE" | grep -qE '^(feat|docs|fix|chore|style|refactor|perf|test)(\([-a-z0-9]+\)): .+';
+            echo $?
+          )
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate result
+        id: report
+        if: steps.evaluate.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::error Please update the pull request title to adhere to conventional commit format."
+          echo "Please update the pull request title to adhere to conventional commit format." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "  prefix(scope): summary" >> $GITHUB_STEP_SUMMARY
+          echo "  prefix(scope)!: summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Valid prefixes: feat, docs, fix, chore, style, refactor, perf, test" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scope should specify the affected area (e.g., auth, publications, feed, etc.)." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Example:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "  feat(publications): agrega paginación al feed principal" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Use '!' for breaking changes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See https://www.conventionalcommits.org/en/v1.0.0/" >> $GITHUB_STEP_SUMMARY
+
+          gh pr comment ${{ github.event.pull_request.number }} --body-file $GITHUB_STEP_SUMMARY
+
+          exit "${{ steps.evaluate.outputs.status }}"
+
+      - name: Evaluate result
+        id: report_success
+        if: steps.evaluate.outputs.status == '0'
+        run: |
+          echo "Great, the title now adheres to the commit convention." >> $GITHUB_STEP_SUMMARY
+          exit "${{ steps.evaluate.outputs.status }}"

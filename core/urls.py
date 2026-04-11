@@ -10,7 +10,8 @@ from .views import (
     PublicationSearchView,
     CommentaryMeCreateView, CommentaryMeUpdateView, CommentaryMeDeleteView,
     FollowView, UnfollowView, FollowersMeListView, FollowingMeListView, FollowersByEducatorView, FollowingByEducatorView,
-    ImageUploadView
+    ImageUploadView,
+    CategoryListView
 )
 
 urlpatterns = [
@@ -37,6 +38,9 @@ urlpatterns = [
     path("educator", EducatorListView.as_view()),                     # GET con offset & limit
     path("educator/search", EducatorSearchView.as_view()),            # GET ?q=nickpart&offset=&limit=
     path("educators/<int:educator_id>", EducatorDetailView.as_view(), name="educator-detail"),
+
+    # Categories
+    path("publication/categories", CategoryListView.as_view()),
 
     # Publications
     path("publications/<int:publication_id>", PublicationDetailView.as_view(), name="publication-detail"),

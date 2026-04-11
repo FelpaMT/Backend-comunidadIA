@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes, OpenApiExample, OpenApiRequest
-from .models import User, Educator, Publication, Commentary, Subscription, Role, PublicationType, RefreshToken, Image
+from .models import User, Educator, Publication, Commentary, Subscription, Role, PublicationType, RefreshToken, Image, Category
 # Arriba en views.py (importa los nuevos serializers)
 from .serializers import (
     UserSerializer, UserCreateSerializer, EducatorSerializer, MeEducatorDetailSerializer, EducatorWithFollowSerializer, EducatorDetailWithPublicationsSerializer,
@@ -19,7 +19,8 @@ from .serializers import (
     TokenPairSerializer,
     RefreshResponseSerializer,
     EducatorUserUpdateSerializer,
-    ImageUploadRequestSerializer, ImageSerializer
+    ImageUploadRequestSerializer, ImageSerializer,
+    CategorySerializer
 )
 from .permissions import IsAdmin, IsOwnerEducatorObject
 from .jwt_utils import generate_access_token, generate_and_store_refresh, decode_any_token, invalidate_refresh, new_access_from_access
@@ -424,7 +425,7 @@ class EducatorDetailView(APIView):
 
         data = EducatorSerializer(edu).data
         data["publications"] = PublicationSerializer(
-            edu.publications.all().order_by("-created_at"),
+            edu.publications.select_related("category").all().order_by("-created_at"),
             many=True
         ).data
         data["followed_by_me"] = followed_by_me
@@ -432,21 +433,40 @@ class EducatorDetailView(APIView):
 
         return Response(data, status=200)
 
+# -------- Categories --------
+class CategoryListView(APIView):
+
+    @extend_schema(
+        tags=["Categories"],
+        responses={200: CategorySerializer(many=True)},
+        description="Lista todas las categorías disponibles para publicaciones."
+    )
+    def get(self, request):
+        categories = Category.objects.all()
+        return Response(CategorySerializer(categories, many=True).data)
+
 # -------- Publications --------
 class PublicationListView(APIView):
 
     @extend_schema(
         tags=["Publications"],
-        parameters=[OpenApiParameter("offset", int, required=True), OpenApiParameter("limit", int, required=True)],
+        parameters=[
+            OpenApiParameter("offset", int, required=True),
+            OpenApiParameter("limit", int, required=True),
+            OpenApiParameter("category_id", int, required=False),
+        ],
         responses={200: PublicationSerializer(many=True)},
-        description="Todas las publicaciones."
+        description="Todas las publicaciones. Filtrar opcionalmente por category_id."
     )
     def get(self, request):
         try:
             offset, limit = require_offset_limit(request)
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
-        qs = Publication.objects.select_related("educator","educator__user").order_by("-created_at")
+        qs = Publication.objects.select_related("educator", "educator__user", "category").order_by("-created_at")
+        category_id = request.query_params.get("category_id")
+        if category_id:
+            qs = qs.filter(category_id=category_id)
         return Response(PublicationSerializer(paginated(qs, offset, limit), many=True).data)
 
 # -------- Publication by ID --------
@@ -460,7 +480,7 @@ class PublicationDetailView(APIView):
     def get(self, request, publication_id: int):
         pub = (
             Publication.objects
-            .select_related("educator", "educator__user")
+            .select_related("educator", "educator__user", "category")
             .filter(id=publication_id)
             .first()
         )
@@ -501,7 +521,7 @@ class PublicationByUserView(APIView):
         edu = Educator.objects.filter(user_id=user_id).first()
         if not edu:
             return Response({"detail":"User sin educator"}, status=404)
-        qs = Publication.objects.filter(educator=edu).order_by("-created_at")
+        qs = Publication.objects.select_related("educator", "educator__user", "category").filter(educator=edu).order_by("-created_at")
         return Response(PublicationSerializer(paginated(qs, offset, limit), many=True).data)
 
 class PublicationMeListView(APIView):
@@ -513,7 +533,7 @@ class PublicationMeListView(APIView):
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
         edu = request.user.educator
-        qs = Publication.objects.filter(educator=edu).order_by("-created_at")
+        qs = Publication.objects.select_related("educator", "educator__user", "category").filter(educator=edu).order_by("-created_at")
         return Response(PublicationSerializer(paginated(qs, offset, limit), many=True).data)
 
 class PublicationMeCreateView(APIView):
@@ -530,11 +550,18 @@ class PublicationMeCreateView(APIView):
         if not ser.is_valid():
             return Response(ser.errors, status=400)
         content_url = save_publication_html(ser.validated_data["content"])
+        category_id = ser.validated_data.get("category_id")
+        category = None
+        if category_id:
+            category = Category.objects.filter(id=category_id).first()
+            if not category:
+                return Response({"detail": "Categoría no encontrada."}, status=400)
         pub = Publication.objects.create(
             title=ser.validated_data["title"],
             publication_type=ser.validated_data["publication_type"],
             content_url=content_url,
-            educator=edu
+            educator=edu,
+            category=category
         )
         return Response(PublicationSerializer(pub).data, status=201)
 
@@ -557,7 +584,17 @@ class PublicationMeUpdateView(APIView):
             updated = update_publication_html(content_url, request.data["content"])
             if updated != "ok":
                 return Response({"detail": updated }, status=500)
+        if "category_id" in request.data:
+            cid = request.data["category_id"]
+            if cid is None:
+                pub.category = None
+            else:
+                cat = Category.objects.filter(id=cid).first()
+                if not cat:
+                    return Response({"detail": "Categoría no encontrada."}, status=400)
+                pub.category = cat
         pub.save()
+        pub.refresh_from_db()
         return Response(PublicationSerializer(pub).data)
 
 class PublicationMeDeleteView(APIView):
@@ -578,26 +615,30 @@ class PublicationSearchView(APIView):
         parameters=[
             OpenApiParameter("nickname_part", str, required=False),
             OpenApiParameter("title_part", str, required=False),
+            OpenApiParameter("category_id", int, required=False),
             OpenApiParameter("offset", int, required=True),
             OpenApiParameter("limit", int, required=True),
         ],
         responses={200: PublicationSerializer(many=True)},
-        description="Busca por nickname (educator) y/o title (publication). Requiere al menos uno."
+        description="Busca por nickname, title y/o category_id. Requiere al menos uno de los tres."
     )
     def get(self, request):
         try:
             offset, limit = require_offset_limit(request)
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
-        nick = request.query_params.get("nickname_part","").strip()
-        title = request.query_params.get("title_part","").strip()
-        if not nick and not title:
-            return Response({"detail":"Se requiere nickname_part o title"}, status=400)
-        qs = Publication.objects.select_related("educator","educator__user")
+        nick = request.query_params.get("nickname_part", "").strip()
+        title = request.query_params.get("title_part", "").strip()
+        category_id = request.query_params.get("category_id", "").strip()
+        if not nick and not title and not category_id:
+            return Response({"detail": "Se requiere nickname_part, title_part o category_id"}, status=400)
+        qs = Publication.objects.select_related("educator", "educator__user", "category")
         if nick:
             qs = qs.filter(educator__nick_name__icontains=nick)
         if title:
             qs = qs.filter(title__icontains=title)
+        if category_id:
+            qs = qs.filter(category_id=category_id)
         qs = qs.order_by("-created_at")
         return Response(PublicationSerializer(paginated(qs, offset, limit), many=True).data)
 

@@ -11,6 +11,16 @@ class PublicationType(models.TextChoices):
     ARTICLE = "ARTICLE", "ARTICLE"
     FORUM = "FORUM", "FORUM"
 
+class Category(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    slug = models.CharField(max_length=100, unique=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
 class User(models.Model):
     # Tabla users
     name = models.CharField(max_length=255, null=False)
@@ -41,6 +51,14 @@ class Publication(models.Model):
     educator = models.ForeignKey(Educator, on_delete=models.CASCADE, related_name="publications", db_column="educator_id")
     publication_type = models.CharField(max_length=20, choices=PublicationType.choices, db_column="publication_type")
     content_url = models.CharField(max_length=1000, null=False, db_column="content_url")
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="publications",
+        db_column="category_id"
+    )
 
 def image_upload_path(instance, filename):
     # El filename NO se usa — lo reemplazamos por el id luego en save()

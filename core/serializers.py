@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Educator, Publication, Commentary, Subscription, RefreshToken, Role, PublicationType, Image
+from .models import User, Educator, Publication, Commentary, Subscription, RefreshToken, Role, PublicationType, Image, Category
 from rest_framework.validators import UniqueValidator
 from drf_spectacular.utils import OpenApiTypes, extend_schema_field
 
@@ -42,16 +42,23 @@ class EducatorSerializer(serializers.ModelSerializer):
         model = Educator
         fields = ["id", "nick_name", "user"]
 
+class CategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = ["id", "name", "slug"]
+
 class PublicationSerializer(serializers.ModelSerializer):
     writer = EducatorSerializer(source="educator", read_only=True)
+    category = CategorySerializer(read_only=True)
     class Meta:
         model = Publication
-        fields = ["id", "title", "publication_type", "content_url", "created_at", "updated_at", "writer"]
+        fields = ["id", "title", "publication_type", "content_url", "created_at", "updated_at", "writer", "category"]
 
 class PublicationCreateSerializer(serializers.Serializer):
     title = serializers.CharField()
     publication_type = serializers.ChoiceField(choices=PublicationType.choices)
     content = serializers.CharField()
+    category_id = serializers.IntegerField(required=False, allow_null=True)
 
 class EducatorWithFollowSerializer(serializers.Serializer):
     id = serializers.IntegerField()
@@ -103,6 +110,7 @@ class PublicationUpdateSerializer(serializers.Serializer):
     title = serializers.CharField(required=False)
     publication_type = serializers.ChoiceField(choices=["ARTICLE", "FORUM"], required=False)
     content = serializers.CharField(required=False)
+    category_id = serializers.IntegerField(required=False, allow_null=True)
 
 class CommentaryUpdateSerializer(serializers.Serializer):
     content = serializers.CharField(required=True)

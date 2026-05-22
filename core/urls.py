@@ -11,7 +11,8 @@ from .views import (
     CommentaryMeCreateView, CommentaryMeUpdateView, CommentaryMeDeleteView,
     FollowView, UnfollowView, FollowersMeListView, FollowingMeListView, FollowersByEducatorView, FollowingByEducatorView,
     ImageUploadView,
-    CategoryListView
+    CategoryListView,
+    ChatView,
 )
 
 urlpatterns = [
@@ -67,4 +68,7 @@ urlpatterns = [
     
     #Image
     path("upload/", ImageUploadView.as_view(), name="image-upload"),
+
+    # Chat (Gemini proxy)
+    path("chat/", ChatView.as_view(), name="chat"),
 ]

@@ -114,6 +114,8 @@ SPECTACULAR_SETTINGS = {
     "SECURITY": [{"BearerAuth": []}],
 }
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
 # Config JWT (tiempos desde .env)
 ACCESS_MIN = int(os.getenv("JWT_ACCESS_MINUTES", "30"))
 REFRESH_DAYS = int(os.getenv("JWT_REFRESH_DAYS", "7"))

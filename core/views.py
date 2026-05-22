@@ -1,3 +1,5 @@
+import google.generativeai as genai
+from django.conf import settings as _settings
 from django.db.models import Q, F
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
@@ -865,3 +867,62 @@ class ImageUploadView(APIView):
         image = Image.objects.create(publication=publication, file=file)
 
         return Response(ImageSerializer(image).data, status=status.HTTP_201_CREATED)
+
+
+_gemini_ready = False
+def _ensure_gemini():
+    global _gemini_ready
+    if not _gemini_ready:
+        api_key = getattr(_settings, "GEMINI_API_KEY", "")
+        if api_key:
+            genai.configure(api_key=api_key)
+            _gemini_ready = True
+    return _gemini_ready
+
+
+class ChatView(APIView):
+    def post(self, request):
+        if not _ensure_gemini():
+            return Response({"error": "Gemini API key not configured."}, status=503)
+
+        messages = request.data.get("messages", [])
+        context = request.data.get("context", "")
+
+        if not messages or not isinstance(messages, list):
+            return Response({"error": "messages is required."}, status=400)
+
+        last = messages[-1]
+        if not last.get("content", "").strip():
+            return Response({"error": "Last message is empty."}, status=400)
+
+        system_instruction = (
+            "Eres un asistente experto en inteligencia artificial aplicada a la educación. "
+            "Ayudas a docentes a entender y aplicar la IA en sus prácticas pedagógicas. "
+            "Responde siempre en español de manera clara y concisa."
+        )
+        if context:
+            system_instruction += (
+                f"\n\nEl usuario está leyendo la siguiente publicación:\n\n{context}\n\n"
+                "Responde preguntas sobre esta publicación cuando sean relevantes, "
+                "pero también puedes responder preguntas generales de IA educativa."
+            )
+
+        try:
+            model = genai.GenerativeModel(
+                model_name="gemini-3.1-flash-lite",
+                system_instruction=system_instruction,
+            )
+
+            history = []
+            for msg in messages[:-1]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role in ("user", "model") and content:
+                    history.append({"role": role, "parts": [content]})
+
+            chat = model.start_chat(history=history)
+            response = chat.send_message(last["content"])
+            return Response({"reply": response.text})
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)

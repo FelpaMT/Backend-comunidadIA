@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes, OpenApiExample, OpenApiRequest
-from .models import User, Educator, Publication, Commentary, Subscription, Role, PublicationType, RefreshToken, Image, Category
+from .models import User, Educator, Publication, Commentary, Subscription, Role, PublicationType, RefreshToken, Image, Category, EmailVerificationToken, PasswordResetToken
 # Arriba en views.py (importa los nuevos serializers)
 from .serializers import (
     UserSerializer, UserCreateSerializer, EducatorSerializer, MeEducatorDetailSerializer, EducatorWithFollowSerializer, EducatorDetailWithPublicationsSerializer,
@@ -22,11 +22,17 @@ from .serializers import (
     RefreshResponseSerializer,
     EducatorUserUpdateSerializer,
     ImageUploadRequestSerializer, ImageSerializer,
-    CategorySerializer
+    CategorySerializer,
+    VerifyEmailSerializer, ResendVerificationSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
+    SignupResponseSerializer
 )
 from .permissions import IsAdmin, IsOwnerEducatorObject
 from .jwt_utils import generate_access_token, generate_and_store_refresh, decode_any_token, invalidate_refresh, new_access_from_access
 from .storage import save_publication_html, update_publication_html, get_publication_html
+from .email_utils import (
+    create_email_verification_token, send_verification_email,
+    create_password_reset_token, send_password_reset_email
+)
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 
@@ -52,16 +58,13 @@ def get_me_educator(request):
 class AuthSignupView(APIView):
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
 
     @extend_schema(
         tags=["Auth"],
         request=UserCreateSerializer,
         responses={201: UserSerializer},
-        examples=[
-            OpenApiExample("Signup req", value={"email":"john@doe.com","name":"John","password":"Secret123","role":"EDUCATOR", "nick_name": "johnny"}),
-            OpenApiExample("Signup res", value={"id":1,"name":"John","email":"john@doe.com","role":"EDUCATOR"}),
-        ],
-        description="Crea usuario (solo role EDUCATOR permitido aquí)."
+        description="Crea usuario docente y envía código de verificación al correo."
     )
     def post(self, request):
         data = request.data.copy()
@@ -71,27 +74,184 @@ class AuthSignupView(APIView):
         ser = UserCreateSerializer(data=data)
         if ser.is_valid():
             user = ser.save()
+            user.is_verified = False
+            user.save(update_fields=["is_verified"])
+
+            # Generar token y enviar correo de verificación
+            ver_token = create_email_verification_token(user)
+            send_verification_email(user, ver_token)
+
+            return Response({
+                "detail": "Usuario registrado exitosamente. Por favor verifica tu correo electrónico con el código enviado.",
+                "email": user.email,
+                "requires_verification": True,
+            }, status=201)
+        return Response(ser.errors, status=400)
+
+class AuthVerifyEmailView(APIView):
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
+
+    @extend_schema(
+        tags=["Auth"],
+        request=VerifyEmailSerializer,
+        responses={200: SignupResponseSerializer},
+        description="Verifica el correo con el código de 6 dígitos o el token de enlace."
+    )
+    def post(self, request):
+        ser = VerifyEmailSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        email = ser.validated_data["email"].strip().lower()
+        code = ser.validated_data.get("code", "").strip()
+        token = ser.validated_data.get("token", "").strip()
+
+        user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            return Response({"detail": "Usuario no encontrado."}, status=404)
+
+        if user.is_verified:
             access = generate_access_token(user)
             refresh, _ = generate_and_store_refresh(user)
-            return Response({"user": UserSerializer(user).data, "access_token": access, "refresh_token": refresh}, status=201)
-        return Response(ser.errors, status=400)
+            return Response({
+                "detail": "Tu cuenta ya está verificada.",
+                "user": UserSerializer(user).data,
+                "access_token": access,
+                "refresh_token": refresh
+            }, status=200)
+
+        ver_token = None
+        if token:
+            ver_token = EmailVerificationToken.objects.filter(user=user, token=token).first()
+        elif code:
+            ver_token = EmailVerificationToken.objects.filter(user=user, code=code).first()
+
+        if not ver_token or not ver_token.is_valid():
+            return Response({"detail": "Código o enlace de verificación inválido o expirado."}, status=400)
+
+        ver_token.is_used = True
+        ver_token.save(update_fields=["is_used"])
+
+        user.is_verified = True
+        user.save(update_fields=["is_verified"])
+
+        access = generate_access_token(user)
+        refresh, _ = generate_and_store_refresh(user)
+
+        return Response({
+            "detail": "Cuenta verificada exitosamente.",
+            "user": UserSerializer(user).data,
+            "access_token": access,
+            "refresh_token": refresh,
+        }, status=200)
+
+class AuthResendVerificationView(APIView):
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
+
+    @extend_schema(
+        tags=["Auth"],
+        request=ResendVerificationSerializer,
+        description="Reenvía el código de verificación al correo."
+    )
+    def post(self, request):
+        ser = ResendVerificationSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        email = ser.validated_data["email"].strip().lower()
+
+        user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            return Response({"detail": "Si el correo está registrado, se ha enviado un nuevo código."}, status=200)
+
+        if user.is_verified:
+            return Response({"detail": "Esta cuenta ya se encuentra verificada."}, status=400)
+
+        ver_token = create_email_verification_token(user)
+        send_verification_email(user, ver_token)
+        return Response({"detail": "Nuevo código de verificación enviado a tu correo."}, status=200)
+
+class AuthForgotPasswordView(APIView):
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
+
+    @extend_schema(
+        tags=["Auth"],
+        request=ForgotPasswordSerializer,
+        description="Solicita el enlace de recuperación de contraseña."
+    )
+    def post(self, request):
+        ser = ForgotPasswordSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        email = ser.validated_data["email"].strip().lower()
+
+        user = User.objects.filter(email__iexact=email).first()
+        if user:
+            reset_token = create_password_reset_token(user)
+            send_password_reset_email(user, reset_token)
+
+        return Response({
+            "detail": "Si el correo está registrado, recibirás un enlace de recuperación en los próximos minutos."
+        }, status=200)
+
+class AuthResetPasswordView(APIView):
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
+
+    @extend_schema(
+        tags=["Auth"],
+        request=ResetPasswordSerializer,
+        description="Restablece la contraseña utilizando el token recibido."
+    )
+    def post(self, request):
+        ser = ResetPasswordSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        token_str = ser.validated_data["token"].strip()
+        new_pwd = ser.validated_data["new_password"]
+
+        reset_token = PasswordResetToken.objects.filter(token=token_str).first()
+        if not reset_token or not reset_token.is_valid():
+            return Response({"detail": "El enlace de recuperación es inválido o ha expirado."}, status=400)
+
+        user = reset_token.user
+        user.set_password(new_pwd)
+        user.save(update_fields=["password"])
+
+        reset_token.is_used = True
+        reset_token.save(update_fields=["is_used"])
+
+        return Response({
+            "detail": "Contraseña actualizada exitosamente. Ya puedes iniciar sesión con tu nueva contraseña."
+        }, status=200)
 
 class AuthLoginView(APIView):
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
 
     @extend_schema(
         tags=["Auth"],
-        request=LoginSerializer,  # 👈 ahora Swagger muestra el body
+        request=LoginSerializer,
         responses={200: TokenPairSerializer},
         description="Login con email y password."
     )
     def post(self, request):
-        email = request.data.get("email")
+        email = request.data.get("email", "").strip().lower()
         pwd = request.data.get("password")
-        user = User.objects.filter(email=email).first()
+        user = User.objects.filter(email__iexact=email).first()
         if not user or not check_password(pwd, user.password):
             return Response({"detail":"Credenciales inválidas"}, status=401)
+        if not user.is_verified and user.role != Role.ADMIN:
+            # Reenviar token si es necesario
+            ver_token = create_email_verification_token(user)
+            send_verification_email(user, ver_token)
+            return Response({
+                "detail": "Debes verificar tu correo electrónico antes de iniciar sesión. Hemos enviado un nuevo código a tu correo.",
+                "requires_verification": True,
+                "email": user.email
+            }, status=403)
         access = generate_access_token(user)
         refresh, _ = generate_and_store_refresh(user)
         return Response({"access_token": access, "refresh_token": refresh}, status=200)
@@ -470,6 +630,36 @@ class PublicationListView(APIView):
         if category_id:
             qs = qs.filter(category_id=category_id)
         return Response(PublicationSerializer(paginated(qs, offset, limit), many=True).data)
+
+# -------- Feed de Publicaciones (Anti-N+1) --------
+class PublicationFeedView(APIView):
+    @extend_schema(
+        tags=["Publications"],
+        parameters=[
+            OpenApiParameter("offset", int, required=True),
+            OpenApiParameter("limit", int, required=True),
+        ],
+        responses={200: PublicationSerializer(many=True)},
+        description="Feed unificado de publicaciones de los educadores que el usuario sigue."
+    )
+    def get(self, request):
+        me_edu = get_me_educator(request)
+        if not me_edu:
+            return Response([], status=200)
+
+        try:
+            offset, limit = require_offset_limit(request)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+
+        following_ids = Subscription.objects.filter(subscriber=me_edu).values_list("subscribed_id", flat=True)
+        qs = (
+            Publication.objects
+            .filter(educator_id__in=following_ids)
+            .select_related("educator", "educator__user", "category")
+            .order_by("-created_at")
+        )
+        return Response(PublicationSerializer(paginated(qs, offset, limit), many=True).data, status=200)
 
 # -------- Publication by ID --------
 class PublicationDetailView(APIView):

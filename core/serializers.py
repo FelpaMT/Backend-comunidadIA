@@ -163,3 +163,18 @@ class ImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = Image
         fields = ["id", "file", "url", "created_at"]
+
+class VerifyEmailSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    code = serializers.CharField(required=False, allow_blank=True)
+    token = serializers.CharField(required=False, allow_blank=True)
+
+class ResendVerificationSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
+class ResetPasswordSerializer(serializers.Serializer):
+    token = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True, min_length=6)

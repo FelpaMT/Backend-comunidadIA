@@ -27,6 +27,7 @@ class User(models.Model):
     email = models.EmailField(unique=True, max_length=100, null=False)
     password = models.CharField(max_length=255, null=False)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.EDUCATOR, null=False)
+    is_verified = models.BooleanField(default=False)
 
     def set_password(self, raw: str):
         self.password = make_password(raw)
@@ -117,3 +118,27 @@ class RefreshToken(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="refresh_token")
     token = models.CharField(max_length=512, unique=True)
     expiry_date = models.DateTimeField()
+
+class EmailVerificationToken(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="email_verification_tokens")
+    code = models.CharField(max_length=6)
+    token = models.CharField(max_length=128, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    def is_valid(self):
+        from django.utils import timezone
+        return not self.is_used and self.expires_at > timezone.now()
+
+class PasswordResetToken(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_reset_tokens")
+    token = models.CharField(max_length=128, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    def is_valid(self):
+        from django.utils import timezone
+        return not self.is_used and self.expires_at > timezone.now()
+

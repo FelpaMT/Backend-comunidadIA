@@ -1,11 +1,12 @@
 from django.urls import path
 from .views import (
     AuthLoginView, AuthSignupView, AuthLogoutView, AuthRefreshView,
+    AuthVerifyEmailView, AuthResendVerificationView, AuthForgotPasswordView, AuthResetPasswordView,
     AdminUserListView, AdminUserDetailView, AdminUserUpdateView, AdminUserDeleteView,
     AdminPublicationUpdateView, AdminPublicationDeleteView,
     MeDeleteView, MeEducatorDetailView, MeEducatorUpdateView,
     EducatorListView, EducatorSearchView, EducatorDetailView,
-    PublicationListView, PublicationByUserView, PublicationMeListView, PublicationDetailView,
+    PublicationListView, PublicationFeedView, PublicationByUserView, PublicationMeListView, PublicationDetailView,
     PublicationMeCreateView, PublicationMeUpdateView, PublicationMeDeleteView,
     PublicationSearchView,
     CommentaryMeCreateView, CommentaryMeUpdateView, CommentaryMeDeleteView,
@@ -19,6 +20,10 @@ urlpatterns = [
     # Auth
     path("auth/login", AuthLoginView.as_view()),
     path("auth/signup", AuthSignupView.as_view()),
+    path("auth/verify-email", AuthVerifyEmailView.as_view()),
+    path("auth/resend-verification", AuthResendVerificationView.as_view()),
+    path("auth/forgot-password", AuthForgotPasswordView.as_view()),
+    path("auth/reset-password", AuthResetPasswordView.as_view()),
     path("auth/logout", AuthLogoutView.as_view()),
     path("auth/refresh", AuthRefreshView.as_view()),
 
@@ -46,6 +51,7 @@ urlpatterns = [
     # Publications
     path("publications/<int:publication_id>", PublicationDetailView.as_view(), name="publication-detail"),
     path("publication", PublicationListView.as_view()),               # GET todas (offset/limit)
+    path("publication/feed", PublicationFeedView.as_view()),          # GET feed seguidos (offset/limit)
     path("publication/by-user/<int:user_id>", PublicationByUserView.as_view()),
     path("publication/me", PublicationMeListView.as_view()),          # GET
     path("publication/me/create", PublicationMeCreateView.as_view()), # POST

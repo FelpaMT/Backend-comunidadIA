@@ -76,5 +76,6 @@ urlpatterns = [
     path("upload/", ImageUploadView.as_view(), name="image-upload"),
 
     # Chat (Gemini proxy)
+    path("ai/chat/", ChatView.as_view(), name="ai-chat"),
     path("chat/", ChatView.as_view(), name="chat"),
 ]

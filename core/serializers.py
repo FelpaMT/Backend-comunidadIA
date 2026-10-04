@@ -38,21 +38,88 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
 class EducatorSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
+    followers_count = serializers.IntegerField(read_only=True)
+    following_count = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = Educator
-        fields = ["id", "nick_name", "user"]
+        fields = [
+            "id", "nick_name", "bio", "institution", "specialty",
+            "avatar", "website", "linkedin_url", "followers_count",
+            "following_count", "user"
+        ]
+
+class EducatorProfileSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="user.name", required=False)
+    email = serializers.EmailField(source="user.email", read_only=True)
+    role = serializers.CharField(source="user.role", read_only=True)
+
+    class Meta:
+        model = Educator
+        fields = [
+            "id", "nick_name", "name", "email", "role", "bio",
+            "institution", "specialty", "avatar", "website", "linkedin_url"
+        ]
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop("user", {})
+        if "name" in user_data:
+            instance.user.name = user_data["name"]
+            instance.user.save(update_fields=["name"])
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance
+
+class EducatorPublicSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    followers_count = serializers.IntegerField(read_only=True)
+    following_count = serializers.IntegerField(read_only=True)
+    is_following = serializers.SerializerMethodNested if False else serializers.SerializerMethodField()
+
+    class Meta:
+        model = Educator
+        fields = [
+            "id", "nick_name", "bio", "institution", "specialty",
+            "avatar", "website", "linkedin_url", "followers_count",
+            "following_count", "is_following", "user"
+        ]
+
+    def get_is_following(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        me_edu = getattr(request.user, "educator", None)
+        if not me_edu:
+            return False
+        return Subscription.objects.filter(subscriber=me_edu, subscribed=obj).exists()
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
-        fields = ["id", "name", "slug"]
+        fields = ["id", "name", "slug", "description"]
+
+class ImageSerializer(serializers.ModelSerializer):
+    absolute_url = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = Image
+        fields = ["id", "file", "url", "absolute_url", "caption", "created_at"]
 
 class PublicationSerializer(serializers.ModelSerializer):
     writer = EducatorSerializer(source="educator", read_only=True)
     category = CategorySerializer(read_only=True)
+    images = ImageSerializer(many=True, read_only=True)
+    comments_count = serializers.IntegerField(read_only=True)
+    images_count = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = Publication
-        fields = ["id", "title", "publication_type", "content_url", "created_at", "updated_at", "writer", "category"]
+        fields = [
+            "id", "title", "publication_type", "content_url",
+            "created_at", "updated_at", "writer", "category",
+            "images", "comments_count", "images_count"
+        ]
 
 class PublicationCreateSerializer(serializers.Serializer):
     title = serializers.CharField()
@@ -63,18 +130,33 @@ class PublicationCreateSerializer(serializers.Serializer):
 class EducatorWithFollowSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     nick_name = serializers.CharField()
+    bio = serializers.CharField(allow_blank=True, required=False)
+    institution = serializers.CharField(allow_blank=True, required=False)
+    specialty = serializers.CharField(allow_blank=True, required=False)
+    avatar = serializers.CharField(allow_blank=True, required=False)
+    website = serializers.CharField(allow_blank=True, required=False)
+    linkedin_url = serializers.CharField(allow_blank=True, required=False)
+    followers_count = serializers.IntegerField(default=0)
+    following_count = serializers.IntegerField(default=0)
     user = UserSerializer()
 
     followed_by_me = serializers.BooleanField()
     following_me = serializers.BooleanField()
+    is_following = serializers.BooleanField(default=False)
     
 class EducatorDetailWithPublicationsSerializer(EducatorWithFollowSerializer):
     publications = PublicationSerializer(many=True)
 
+class SubscriptionToggleSerializer(serializers.Serializer):
+    subscribed = serializers.BooleanField()
+    detail = serializers.CharField()
+
 class CommentarySerializer(serializers.ModelSerializer):
+    writer = EducatorSerializer(source="educator", read_only=True)
+
     class Meta:
         model = Commentary
-        fields = ["id", "content", "created_at", "updated_at", "publication"]
+        fields = ["id", "content", "created_at", "updated_at", "publication", "writer"]
 
 class CommentaryCreateSerializer(serializers.Serializer):
     content = serializers.CharField()
@@ -177,4 +259,14 @@ class ForgotPasswordSerializer(serializers.Serializer):
 
 class ResetPasswordSerializer(serializers.Serializer):
     token = serializers.CharField(required=True)
-    new_password = serializers.CharField(required=True, min_length=6)
+    new_password = serializers.CharField(required=True, min_length=6)
+
+class AIChatRequestSerializer(serializers.Serializer):
+    message = serializers.CharField(required=True, help_text="Consulta o mensaje enviado por el usuario al Asistente IA.")
+    publication_id = serializers.IntegerField(required=False, allow_null=True, default=None, help_text="ID de la publicación para inyectar contexto pedagógico (opcional).")
+    history = serializers.ListField(child=serializers.DictField(), required=False, default=list, help_text="Historial conversacional previo.")
+
+class AIChatResponseSerializer(serializers.Serializer):
+    response = serializers.CharField(help_text="Respuesta generada por el Tutor IA Gemini.")
+    context_used = serializers.BooleanField(help_text="Indica si se utilizó el contexto pedagógico de la publicación especificada.")
+

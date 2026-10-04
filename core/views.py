@@ -10,7 +10,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes,
 from .models import User, Educator, Publication, Commentary, Subscription, Role, PublicationType, RefreshToken, Image, Category, EmailVerificationToken, PasswordResetToken
 # Arriba en views.py (importa los nuevos serializers)
 from .serializers import (
-    UserSerializer, UserCreateSerializer, EducatorSerializer, MeEducatorDetailSerializer, EducatorWithFollowSerializer, EducatorDetailWithPublicationsSerializer,
+    UserSerializer, UserCreateSerializer, EducatorSerializer, EducatorProfileSerializer, EducatorPublicSerializer, SubscriptionToggleSerializer, MeEducatorDetailSerializer, EducatorWithFollowSerializer, EducatorDetailWithPublicationsSerializer,
     PublicationSerializer, PublicationCreateSerializer,
     CommentarySerializer, CommentaryCreateSerializer,
     SubscriptionSerializer,
@@ -24,8 +24,9 @@ from .serializers import (
     ImageUploadRequestSerializer, ImageSerializer,
     CategorySerializer,
     VerifyEmailSerializer, ResendVerificationSerializer, ForgotPasswordSerializer, ResetPasswordSerializer,
-    SignupResponseSerializer
+    SignupResponseSerializer, AIChatRequestSerializer, AIChatResponseSerializer
 )
+from .gemini_service import generate_chat_response
 from .permissions import IsAdmin, IsOwnerEducatorObject
 from .jwt_utils import generate_access_token, generate_and_store_refresh, decode_any_token, invalidate_refresh, new_access_from_access
 from .storage import save_publication_html, update_publication_html, get_publication_html
@@ -405,29 +406,23 @@ class MeEducatorDetailView(APIView):
 class MeEducatorUpdateView(APIView):
     @extend_schema(
         tags=["Me"],
-        request=EducatorUserUpdateSerializer,
-        responses={200: MeEducatorDetailSerializer},
-        description="Actualizar datos de user (name,email) y educator (nick_name)."
+        request=EducatorProfileSerializer,
+        responses={200: EducatorProfileSerializer},
+        description="Actualiza el perfil completo del educador autenticado."
     )
     def put(self, request):
         user = request.user
         edu = getattr(user, "educator", None)
         if not edu:
-            return Response({"detail":"No es educator"}, status=403)
-        # user
-        ser = EducatorUserUpdateSerializer(data=request.data)
-        ser.is_valid()
-        if not ser.is_valid():
-            return Response(ser.errors, status=400)
-        for f in ["name","email"]:
-            if f in request.data:
-                setattr(user, f, request.data[f])
-        user.save()
-        # educator
-        if "nick_name" in request.data:
-            edu.nick_name = request.data["nick_name"]
-            edu.save()
-        return Response(EducatorSerializer(edu).data)
+            return Response({"detail": "No es educator"}, status=403)
+        
+        ser = EducatorProfileSerializer(instance=edu, data=request.data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(EducatorProfileSerializer(edu).data, status=200)
+
+    def patch(self, request):
+        return self.put(request)
 
 class MeDeleteView(APIView):
 
@@ -1071,48 +1066,41 @@ def _ensure_gemini():
 
 
 class ChatView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        summary="Chat con Asistente Virtual Google Gemini",
+        description="Permite enviar consultas pedagógicas al Tutor IA Gemini con contexto opcional de una publicación.",
+        request=AIChatRequestSerializer,
+        responses={200: AIChatResponseSerializer, 400: dict, 500: dict},
+        tags=["AI Assistant"]
+    )
     def post(self, request):
-        if not _ensure_gemini():
-            return Response({"error": "Gemini API key not configured."}, status=503)
+        serializer = AIChatRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            # Soporte de formato legacy {'messages': [...], 'publication_id': ...}
+            messages = request.data.get("messages", [])
+            publication_id = request.data.get("publication_id") or request.data.get("publicationId")
+            
+            if messages and isinstance(messages, list):
+                last_msg = messages[-1].get("content", "") if len(messages) > 0 else ""
+                history = messages[:-1]
+                res = generate_chat_response(message=last_msg, publication_id=publication_id, history=history)
+                return Response({
+                    "response": res["response"],
+                    "context_used": res["context_used"],
+                    "reply": res["response"]
+                }, status=status.HTTP_200_OK)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        messages = request.data.get("messages", [])
-        context = request.data.get("context", "")
+        message = serializer.validated_data["message"]
+        publication_id = serializer.validated_data.get("publication_id")
+        history = serializer.validated_data.get("history", [])
 
-        if not messages or not isinstance(messages, list):
-            return Response({"error": "messages is required."}, status=400)
+        res = generate_chat_response(message=message, publication_id=publication_id, history=history)
 
-        last = messages[-1]
-        if not last.get("content", "").strip():
-            return Response({"error": "Last message is empty."}, status=400)
-
-        system_instruction = (
-            "Eres un asistente experto en inteligencia artificial aplicada a la educación. "
-            "Ayudas a docentes a entender y aplicar la IA en sus prácticas pedagógicas. "
-            "Responde siempre en español de manera clara y concisa."
-        )
-        if context:
-            system_instruction += (
-                f"\n\nEl usuario está leyendo la siguiente publicación:\n\n{context}\n\n"
-                "Responde preguntas sobre esta publicación cuando sean relevantes, "
-                "pero también puedes responder preguntas generales de IA educativa."
-            )
-
-        try:
-            model = genai.GenerativeModel(
-                model_name="gemini-3.1-flash-lite",
-                system_instruction=system_instruction,
-            )
-
-            history = []
-            for msg in messages[:-1]:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role in ("user", "model") and content:
-                    history.append({"role": role, "parts": [content]})
-
-            chat = model.start_chat(history=history)
-            response = chat.send_message(last["content"])
-            return Response({"reply": response.text})
-
-        except Exception as e:
-            return Response({"error": str(e)}, status=500)
+        return Response({
+            "response": res["response"],
+            "context_used": res["context_used"],
+            "reply": res["response"]
+        }, status=status.HTTP_200_OK)

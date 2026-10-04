@@ -3,7 +3,8 @@ import django.db.models.deletion
 from django.conf import settings
 
 def enable_pg_trgm(apps, schema_editor):
-    schema_editor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
 
 class Migration(migrations.Migration):
     initial = True

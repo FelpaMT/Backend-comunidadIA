@@ -1,5 +1,7 @@
 from django.db import models
 from django.contrib.auth.hashers import make_password
+from django.core.exceptions import ValidationError
+from django.utils import timezone
 import os
 from django.conf import settings
 
@@ -14,6 +16,7 @@ class PublicationType(models.TextChoices):
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
     slug = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True, default="")
 
     class Meta:
         ordering = ["name"]
@@ -22,7 +25,6 @@ class Category(models.Model):
         return self.name
 
 class User(models.Model):
-    # Tabla users
     name = models.CharField(max_length=255, null=False)
     email = models.EmailField(unique=True, max_length=100, null=False)
     password = models.CharField(max_length=255, null=False)
@@ -40,11 +42,33 @@ class User(models.Model):
     def is_anonymous(self):
         return False
     
+    def __str__(self):
+        return f"{self.name} ({self.email})"
+
 class Educator(models.Model):
     id = models.BigAutoField(primary_key=True)
     nick_name = models.CharField(max_length=255, unique=True, null=True, db_column="nick_name")
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="educator", db_column="user_id")
     
+    # Campos de perfil extendido
+    bio = models.TextField(max_length=1000, blank=True, default="")
+    institution = models.CharField(max_length=255, blank=True, default="")
+    specialty = models.CharField(max_length=255, blank=True, default="")
+    avatar = models.URLField(max_length=500, blank=True, default="")
+    website = models.URLField(max_length=500, blank=True, default="")
+    linkedin_url = models.URLField(max_length=500, blank=True, default="")
+    
+    @property
+    def followers_count(self):
+        return self.followers.count()
+
+    @property
+    def following_count(self):
+        return self.following.count()
+
+    def __str__(self):
+        return self.nick_name or self.user.name
+
 class Publication(models.Model):
     title = models.CharField(max_length=255, null=False)
     created_at = models.DateTimeField(auto_now_add=True, null=False, db_column="createdAt")
@@ -61,11 +85,20 @@ class Publication(models.Model):
         db_column="category_id"
     )
 
+    @property
+    def comments_count(self):
+        return self.commentaries.count()
+
+    @property
+    def images_count(self):
+        return self.images.count()
+
+    def __str__(self):
+        return self.title
+
 def image_upload_path(instance, filename):
-    # El filename NO se usa — lo reemplazamos por el id luego en save()
-    return f"images/{filename}"  # temporal
-    # Luego en save() renombramos el archivo al ID real
-    
+    return f"images/{filename}"
+
 class Image(models.Model):
     publication = models.ForeignKey(
         "Publication",
@@ -74,29 +107,25 @@ class Image(models.Model):
     )
     file = models.ImageField(upload_to=image_upload_path)
     url = models.URLField(blank=True, null=True, editable=False)
+    caption = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    @property
+    def absolute_url(self):
+        return self.url or (f"{settings.DOMAIN}{settings.MEDIA_URL}{self.file.name}" if self.file else "")
+
     def save(self, *args, **kwargs):
-        # Guardamos primero para obtener ID
         is_new = self.pk is None
         super().save(*args, **kwargs)
 
         if is_new:
             old_path = self.file.path
-            ext = os.path.splitext(old_path)[1]  # .png, .jpg, etc
-            new_name = f"{self.pk}{ext}"  # filename = id.ext
+            ext = os.path.splitext(old_path)[1]
+            new_name = f"{self.pk}{ext}"
             new_path = os.path.join(os.path.dirname(old_path), new_name)
-
-            # Renombrar archivo físico
             os.rename(old_path, new_path)
-
-            # Actualizar file field
             self.file.name = f"images/{new_name}"
-
-            # Generar URL pública
             self.url = f"{settings.DOMAIN}{settings.MEDIA_URL}{self.file.name}"
-
-            # Guardar cambios
             super().save(update_fields=["file", "url"])
 
 class Commentary(models.Model):
@@ -107,12 +136,20 @@ class Commentary(models.Model):
     publication = models.ForeignKey(Publication, on_delete=models.CASCADE, related_name="commentaries", db_column="publication_id")
 
 class Subscription(models.Model):
-    # Many-to-many Educator<->Educator con PK compuesta (subscriber_id, subscribed_id)
     subscriber = models.ForeignKey(Educator, on_delete=models.CASCADE, related_name="following", db_column="subscriber_id")
     subscribed = models.ForeignKey(Educator, on_delete=models.CASCADE, related_name="followers", db_column="subscribed_id")
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         unique_together = ("subscriber", "subscribed")
+
+    def clean(self):
+        if self.subscriber_id and self.subscribed_id and self.subscriber_id == self.subscribed_id:
+            raise ValidationError("Un educador no puede suscribirse a sí mismo.")
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
 
 class RefreshToken(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="refresh_token")
@@ -128,7 +165,6 @@ class EmailVerificationToken(models.Model):
     is_used = models.BooleanField(default=False)
 
     def is_valid(self):
-        from django.utils import timezone
         return not self.is_used and self.expires_at > timezone.now()
 
 class PasswordResetToken(models.Model):
@@ -139,6 +175,4 @@ class PasswordResetToken(models.Model):
     is_used = models.BooleanField(default=False)
 
     def is_valid(self):
-        from django.utils import timezone
         return not self.is_used and self.expires_at > timezone.now()
-

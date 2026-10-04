@@ -109,6 +109,12 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
             }
         except Exception as e:
             last_exception = e
+            err_str = str(e)
+            if "429" in err_str or "Quota exceeded" in err_str or "rate-limits" in err_str:
+                return {
+                    "response": "El Asistente IA está recibiendo muchas consultas simultáneas en este momento. Por favor, espera 15 segundos y vuelve a enviar tu pregunta.",
+                    "context_used": context_used
+                }
             print(f"[GeminiService] Model '{m_name}' failed: {e}. Trying next model...")
 
     return {

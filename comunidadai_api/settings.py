@@ -134,7 +134,13 @@ EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "ComunidadIA <soporte@comunidadia.edu>")
+raw_from = os.getenv("DEFAULT_FROM_EMAIL", "").strip()
+if not raw_from:
+    DEFAULT_FROM_EMAIL = f"Comunidad IA <{EMAIL_HOST_USER}>" if EMAIL_HOST_USER else "no-reply@pedagogiavirtual.com"
+elif "@" not in raw_from:
+    DEFAULT_FROM_EMAIL = f"{raw_from} <{EMAIL_HOST_USER}>" if EMAIL_HOST_USER else raw_from
+else:
+    DEFAULT_FROM_EMAIL = raw_from
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 SPECTACULAR_SETTINGS = {

@@ -1,8 +1,9 @@
-import google.generativeai as genai
-from django.conf import settings as _settings
 from django.db.models import Q, F
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
+from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -14,11 +15,11 @@ from .serializers import (
     PublicationSerializer, PublicationCreateSerializer,
     CommentarySerializer, CommentaryCreateSerializer,
     SubscriptionSerializer,
-    LoginSerializer, RefreshTokenSerializer, DeleteMeSerializer,
+    LoginSerializer, DeleteMeSerializer,
     AdminUserUpdateSerializer,
     PublicationUpdateSerializer, CommentaryUpdateSerializer,
     MessageSerializer,
-    TokenPairSerializer,
+    AccessTokenSerializer,
     RefreshResponseSerializer,
     EducatorUserUpdateSerializer,
     ImageUploadRequestSerializer, ImageSerializer,
@@ -28,7 +29,7 @@ from .serializers import (
 )
 from .gemini_service import generate_chat_response
 from .permissions import IsAdmin, IsOwnerEducatorObject
-from .jwt_utils import generate_access_token, generate_and_store_refresh, decode_any_token, invalidate_refresh, new_access_from_access
+from .jwt_utils import generate_access_token, generate_and_store_refresh
 from .storage import save_publication_html, update_publication_html, get_publication_html
 from .email_utils import (
     create_email_verification_token, send_verification_email,
@@ -56,6 +57,28 @@ def get_me_educator(request):
     return getattr(user, "educator", None)
 
 # -------- Auth --------
+def _set_refresh_cookie(response, token):
+    response.set_cookie(
+        settings.REFRESH_COOKIE_NAME,
+        token,
+        max_age=int(settings.JWT_CONFIG["REFRESH_LIFETIME"].total_seconds()),
+        httponly=True,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+        path="/api/auth/",
+    )
+    return response
+
+
+def _clear_refresh_cookie(response):
+    response.delete_cookie(
+        settings.REFRESH_COOKIE_NAME,
+        path="/api/auth/",
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+    )
+    return response
+
+
 class AuthSignupView(APIView):
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
@@ -112,14 +135,7 @@ class AuthVerifyEmailView(APIView):
             return Response({"detail": "Usuario no encontrado."}, status=404)
 
         if user.is_verified:
-            access = generate_access_token(user)
-            refresh, _ = generate_and_store_refresh(user)
-            return Response({
-                "detail": "Tu cuenta ya está verificada.",
-                "user": UserSerializer(user).data,
-                "access_token": access,
-                "refresh_token": refresh
-            }, status=200)
+            return Response({"detail": "Tu cuenta ya está verificada. Inicia sesión para continuar."}, status=200)
 
         ver_token = None
         if token:
@@ -139,12 +155,12 @@ class AuthVerifyEmailView(APIView):
         access = generate_access_token(user)
         refresh, _ = generate_and_store_refresh(user)
 
-        return Response({
+        response = Response({
             "detail": "Cuenta verificada exitosamente.",
             "user": UserSerializer(user).data,
             "access_token": access,
-            "refresh_token": refresh,
         }, status=200)
+        return _set_refresh_cookie(response, refresh)
 
 class AuthResendVerificationView(APIView):
     authentication_classes = []
@@ -154,6 +170,7 @@ class AuthResendVerificationView(APIView):
     @extend_schema(
         tags=["Auth"],
         request=ResendVerificationSerializer,
+        responses={200: MessageSerializer},
         description="Reenvía el código de verificación al correo."
     )
     def post(self, request):
@@ -180,6 +197,7 @@ class AuthForgotPasswordView(APIView):
     @extend_schema(
         tags=["Auth"],
         request=ForgotPasswordSerializer,
+        responses={200: MessageSerializer},
         description="Solicita el enlace de recuperación de contraseña."
     )
     def post(self, request):
@@ -204,6 +222,7 @@ class AuthResetPasswordView(APIView):
     @extend_schema(
         tags=["Auth"],
         request=ResetPasswordSerializer,
+        responses={200: MessageSerializer},
         description="Restablece la contraseña utilizando el token recibido."
     )
     def post(self, request):
@@ -217,8 +236,13 @@ class AuthResetPasswordView(APIView):
             return Response({"detail": "El enlace de recuperación es inválido o ha expirado."}, status=400)
 
         user = reset_token.user
+        try:
+            validate_password(new_pwd, user)
+        except DjangoValidationError as exc:
+            return Response({"new_password": list(exc.messages)}, status=400)
         user.set_password(new_pwd)
         user.save(update_fields=["password"])
+        RefreshToken.objects.filter(user=user).delete()
 
         reset_token.is_used = True
         reset_token.save(update_fields=["is_used"])
@@ -235,7 +259,7 @@ class AuthLoginView(APIView):
     @extend_schema(
         tags=["Auth"],
         request=LoginSerializer,
-        responses={200: TokenPairSerializer},
+        responses={200: AccessTokenSerializer},
         description="Login con email y password."
     )
     def post(self, request):
@@ -255,7 +279,8 @@ class AuthLoginView(APIView):
             }, status=403)
         access = generate_access_token(user)
         refresh, _ = generate_and_store_refresh(user)
-        return Response({"access_token": access, "refresh_token": refresh}, status=200)
+        response = Response({"access_token": access}, status=200)
+        return _set_refresh_cookie(response, refresh)
 
 class AuthLogoutView(APIView):
     authentication_classes = []
@@ -263,19 +288,19 @@ class AuthLogoutView(APIView):
 
     @extend_schema(
         tags=["Auth"],
-        request=RefreshTokenSerializer,
+        request=None,
         responses={200: MessageSerializer},
         description="Elimina el refresh token en DB para invalidar sesiones."
     )
     def post(self, request):
-        token = request.data.get("refresh_token")
+        token = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
         if not token:
-            return Response({"detail": "refresh_token requerido"}, status=400)
+            return _clear_refresh_cookie(Response({"detail": "Sesión cerrada"}, status=200))
 
         ref = RefreshToken.objects.filter(token=token).first()
         if ref:
             ref.delete()
-        return Response({"detail": "OK"}, status=200)
+        return _clear_refresh_cookie(Response({"detail": "OK"}, status=200))
 
 class AuthRefreshView(APIView):
     authentication_classes = []
@@ -283,24 +308,27 @@ class AuthRefreshView(APIView):
 
     @extend_schema(
         tags=["Auth"],
-        request=RefreshTokenSerializer,
+        request=None,
         responses={200: RefreshResponseSerializer},
         description="Recibe access_token y retorna uno nuevo (usa refresh guardado en DB)."
     )
     def post(self, request):
-        refresh_token = request.data.get("refresh_token")
+        refresh_token = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
         if not refresh_token:
-            return Response({"detail": "refresh_token requerido"}, status=400)
+            return _clear_refresh_cookie(Response({"detail": "Sesión no disponible"}, status=401))
 
         ref = RefreshToken.objects.filter(token=refresh_token).first()
         if not ref:
             return Response({"detail": "Refresh token inválido"}, status=401)
-        if ref.expiry_date < timezone.now():
-            return Response({"detail": "Refresh token expirado"}, status=401)
+        if ref.expiry_date <= timezone.now():
+            ref.delete()
+            return _clear_refresh_cookie(Response({"detail": "Refresh token expirado"}, status=401))
 
         user = ref.user
+        new_refresh, _ = generate_and_store_refresh(user)
         new_access = generate_access_token(user)
-        return Response({"new_access_token": new_access}, status=200)
+        response = Response({"new_access_token": new_access}, status=200)
+        return _set_refresh_cookie(response, new_refresh)
 
 # -------- Admin --------
 class AdminUserListView(APIView):
@@ -421,6 +449,7 @@ class MeEducatorUpdateView(APIView):
         ser.save()
         return Response(EducatorProfileSerializer(edu).data, status=200)
 
+    @extend_schema(request=EducatorProfileSerializer, responses={200: EducatorProfileSerializer})
     def patch(self, request):
         return self.put(request)
 
@@ -1047,26 +1076,25 @@ class ImageUploadView(APIView):
         publication_id = serializer.validated_data["publication_id"]
         file = serializer.validated_data["file"]
 
-        publication = Publication.objects.get(pk=publication_id)
+        if file.size > settings.MAX_UPLOAD_SIZE:
+            return Response({"detail": "La imagen supera el tamaño máximo permitido."}, status=413)
+
+        publication = Publication.objects.filter(pk=publication_id).first()
+        if publication is None:
+            return Response({"detail": "Publicación no encontrada."}, status=404)
+        educator = getattr(request.user, "educator", None)
+        is_admin = getattr(request.user, "role", None) == Role.ADMIN or getattr(request.user, "is_staff", False)
+        if not is_admin and (educator is None or publication.educator_id != educator.id):
+            return Response({"detail": "No tienes permiso para agregar imágenes a esta publicación."}, status=403)
 
         image = Image.objects.create(publication=publication, file=file)
 
         return Response(ImageSerializer(image).data, status=status.HTTP_201_CREATED)
 
 
-_gemini_ready = False
-def _ensure_gemini():
-    global _gemini_ready
-    if not _gemini_ready:
-        api_key = getattr(_settings, "GEMINI_API_KEY", "")
-        if api_key:
-            genai.configure(api_key=api_key)
-            _gemini_ready = True
-    return _gemini_ready
-
-
 class ChatView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "chat"
 
     @extend_schema(
         summary="Chat con Asistente Virtual Google Gemini",
@@ -1076,6 +1104,18 @@ class ChatView(APIView):
         tags=["AI Assistant"]
     )
     def post(self, request):
+        message_text = request.data.get("message", "")
+        history_items = request.data.get("history", request.data.get("messages", []))
+        if not isinstance(message_text, str) or len(message_text) > 4000:
+            return Response({"detail": "El mensaje debe tener como máximo 4000 caracteres."}, status=400)
+        if history_items is not None and (not isinstance(history_items, list) or len(history_items) > 20):
+            return Response({"detail": "El historial debe contener como máximo 20 mensajes."}, status=400)
+        if isinstance(history_items, list) and any(
+            not isinstance(item, dict) or not isinstance(item.get("content", ""), str) or len(item.get("content", "")) > 4000
+            for item in history_items
+        ):
+            return Response({"detail": "Cada mensaje del historial debe ser texto de hasta 4000 caracteres."}, status=400)
+
         serializer = AIChatRequestSerializer(data=request.data)
         if not serializer.is_valid():
             # Soporte de formato legacy {'messages': [...], 'publication_id': ...}

@@ -1,5 +1,4 @@
 import os
-import random
 import secrets
 from datetime import timedelta
 from django.utils import timezone
@@ -8,7 +7,7 @@ from django.core.mail import send_mail
 from .models import User, EmailVerificationToken, PasswordResetToken
 
 def generate_verification_code() -> str:
-    return str(random.randint(100000, 999999))
+    return f"{secrets.randbelow(900000) + 100000:06d}"
 
 def create_email_verification_token(user: User):
     code = generate_verification_code()

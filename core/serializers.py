@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from .models import User, Educator, Publication, Commentary, Subscription, RefreshToken, Role, PublicationType, Image, Category
 from rest_framework.validators import UniqueValidator
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from drf_spectacular.utils import OpenApiTypes, extend_schema_field
 
 class MessageSerializer(serializers.Serializer):
@@ -12,7 +14,8 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "email", "role"]
 
 class UserCreateSerializer(serializers.ModelSerializer):
-    
+    password = serializers.CharField(write_only=True, min_length=12, trim_whitespace=False)
+
     nick_name = serializers.CharField(
         required=True,
         validators=[UniqueValidator(
@@ -24,6 +27,17 @@ class UserCreateSerializer(serializers.ModelSerializer):
         model = User
         fields = ["id", "name", "email", "password", "role", "nick_name"]
         extra_kwargs = {"password": {"write_only": True}}
+
+    def validate_password(self, value):
+        candidate = User(
+            name=self.initial_data.get("name", ""),
+            email=self.initial_data.get("email", ""),
+        )
+        try:
+            validate_password(value, candidate)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
 
     def create(self, validated):
         password = validated.pop("password")
@@ -143,7 +157,7 @@ class EducatorWithFollowSerializer(serializers.Serializer):
     followed_by_me = serializers.BooleanField()
     following_me = serializers.BooleanField()
     is_following = serializers.BooleanField(default=False)
-    
+
 class EducatorDetailWithPublicationsSerializer(EducatorWithFollowSerializer):
     publications = PublicationSerializer(many=True)
 
@@ -174,9 +188,6 @@ class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField()
 
-class RefreshTokenSerializer(serializers.Serializer):
-    refresh_token = serializers.CharField()
-
 class DeleteMeSerializer(serializers.Serializer):
     password = serializers.CharField()
 
@@ -201,17 +212,16 @@ class CommentaryUpdateSerializer(serializers.Serializer):
 from rest_framework import serializers
 from .models import User, Educator, Publication
 
-class TokenPairSerializer(serializers.Serializer):
+class AccessTokenSerializer(serializers.Serializer):
     access_token = serializers.CharField()
-    refresh_token = serializers.CharField()
 
 class RefreshResponseSerializer(serializers.Serializer):
     new_access_token = serializers.CharField()
 
 class SignupResponseSerializer(serializers.Serializer):
-    user = UserSerializer()
-    access_token = serializers.CharField()
-    refresh_token = serializers.CharField()
+    detail = serializers.CharField()
+    user = UserSerializer(required=False)
+    access_token = serializers.CharField(required=False)
 
 class MeEducatorDetailSerializer(serializers.Serializer):
     id = serializers.IntegerField()
@@ -241,11 +251,6 @@ class ImageUploadRequestSerializer(serializers.Serializer):
     file = serializers.ImageField()
 
 
-class ImageSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Image
-        fields = ["id", "file", "url", "created_at"]
-
 class VerifyEmailSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     code = serializers.CharField(required=False, allow_blank=True)
@@ -259,7 +264,14 @@ class ForgotPasswordSerializer(serializers.Serializer):
 
 class ResetPasswordSerializer(serializers.Serializer):
     token = serializers.CharField(required=True)
-    new_password = serializers.CharField(required=True, min_length=6)
+    new_password = serializers.CharField(required=True, min_length=12, trim_whitespace=False)
+
+    def validate_new_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
 
 class AIChatRequestSerializer(serializers.Serializer):
     message = serializers.CharField(required=True, help_text="Consulta o mensaje enviado por el usuario al Asistente IA.")
@@ -269,4 +281,4 @@ class AIChatRequestSerializer(serializers.Serializer):
 class AIChatResponseSerializer(serializers.Serializer):
     response = serializers.CharField(help_text="Respuesta generada por el Tutor IA Gemini.")
     context_used = serializers.BooleanField(help_text="Indica si se utilizó el contexto pedagógico de la publicación especificada.")
-
+

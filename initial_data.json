@@ -1,184 +1,151 @@
 [
-{
-  "model": "core.category",
-  "pk": 1,
-  "fields": {
-    "name": "Matem·tica",
-    "slug": "matematica",
-    "description": ""
+  {
+    "model": "core.category",
+    "pk": 1,
+    "fields": {
+      "name": "Matem√°tica",
+      "slug": "matematica",
+      "description": ""
+    }
+  },
+  {
+    "model": "core.category",
+    "pk": 2,
+    "fields": {
+      "name": "Ciencias",
+      "slug": "ciencias",
+      "description": ""
+    }
+  },
+  {
+    "model": "core.category",
+    "pk": 3,
+    "fields": {
+      "name": "Lenguaje",
+      "slug": "lenguaje",
+      "description": ""
+    }
+  },
+  {
+    "model": "core.category",
+    "pk": 4,
+    "fields": {
+      "name": "Historia",
+      "slug": "historia",
+      "description": ""
+    }
+  },
+  {
+    "model": "core.category",
+    "pk": 5,
+    "fields": {
+      "name": "Arte",
+      "slug": "arte",
+      "description": ""
+    }
+  },
+  {
+    "model": "core.category",
+    "pk": 6,
+    "fields": {
+      "name": "Tecnolog√≠a",
+      "slug": "tecnologia",
+      "description": ""
+    }
+  },
+  {
+    "model": "core.category",
+    "pk": 7,
+    "fields": {
+      "name": "Otra",
+      "slug": "otra",
+      "description": ""
+    }
+  },
+  {
+    "model": "core.user",
+    "pk": 1,
+    "fields": {
+      "name": "Educador Prueba",
+      "email": "educador@comunidadia.edu",
+      "password": "!",
+      "role": "EDUCATOR",
+      "is_verified": false
+    }
+  },
+  {
+    "model": "core.user",
+    "pk": 2,
+    "fields": {
+      "name": "Admin Prueba",
+      "email": "admin@comunidadia.edu",
+      "password": "!",
+      "role": "ADMIN",
+      "is_verified": false
+    }
+  },
+  {
+    "model": "core.user",
+    "pk": 3,
+    "fields": {
+      "name": "Docente Prueba",
+      "email": "docente.prueba@comunidadia.edu",
+      "password": "!",
+      "role": "EDUCATOR",
+      "is_verified": false
+    }
+  },
+  {
+    "model": "core.user",
+    "pk": 4,
+    "fields": {
+      "name": "Luis",
+      "email": "lfmayorgatib@gmail.com",
+      "password": "!",
+      "role": "EDUCATOR",
+      "is_verified": false
+    }
+  },
+  {
+    "model": "core.educator",
+    "pk": 1,
+    "fields": {
+      "nick_name": "educador_demo",
+      "user": 1,
+      "bio": "",
+      "institution": "",
+      "specialty": "",
+      "avatar": "",
+      "website": "",
+      "linkedin_url": ""
+    }
+  },
+  {
+    "model": "core.educator",
+    "pk": 3,
+    "fields": {
+      "nick_name": "docente_prueba",
+      "user": 3,
+      "bio": "",
+      "institution": "",
+      "specialty": "",
+      "avatar": "",
+      "website": "",
+      "linkedin_url": ""
+    }
+  },
+  {
+    "model": "core.educator",
+    "pk": 4,
+    "fields": {
+      "nick_name": "Mayorga",
+      "user": 4,
+      "bio": "",
+      "institution": "",
+      "specialty": "",
+      "avatar": "",
+      "website": "",
+      "linkedin_url": ""
+    }
   }
-},
-{
-  "model": "core.category",
-  "pk": 2,
-  "fields": {
-    "name": "Ciencias",
-    "slug": "ciencias",
-    "description": ""
-  }
-},
-{
-  "model": "core.category",
-  "pk": 3,
-  "fields": {
-    "name": "Lenguaje",
-    "slug": "lenguaje",
-    "description": ""
-  }
-},
-{
-  "model": "core.category",
-  "pk": 4,
-  "fields": {
-    "name": "Historia",
-    "slug": "historia",
-    "description": ""
-  }
-},
-{
-  "model": "core.category",
-  "pk": 5,
-  "fields": {
-    "name": "Arte",
-    "slug": "arte",
-    "description": ""
-  }
-},
-{
-  "model": "core.category",
-  "pk": 6,
-  "fields": {
-    "name": "TecnologÌa",
-    "slug": "tecnologia",
-    "description": ""
-  }
-},
-{
-  "model": "core.category",
-  "pk": 7,
-  "fields": {
-    "name": "Otra",
-    "slug": "otra",
-    "description": ""
-  }
-},
-{
-  "model": "core.user",
-  "pk": 1,
-  "fields": {
-    "name": "Educador Prueba",
-    "email": "educador@comunidadia.edu",
-    "password": "pbkdf2_sha256$720000$CJk8WWaPq6tO64XvD3schv$7BsoF+/VNBTNeh+5zB9cDxVfKEbaZOp8pSOcoDCaWr4=",
-    "role": "EDUCATOR",
-    "is_verified": true
-  }
-},
-{
-  "model": "core.user",
-  "pk": 2,
-  "fields": {
-    "name": "Admin Prueba",
-    "email": "admin@comunidadia.edu",
-    "password": "pbkdf2_sha256$720000$sraTywtVnrGZjFxTEgsgKc$sVBVY0qr/B5D/0sA2yreetkfJk8EQvclDxNxeOi/1+o=",
-    "role": "ADMIN",
-    "is_verified": true
-  }
-},
-{
-  "model": "core.user",
-  "pk": 3,
-  "fields": {
-    "name": "Docente Prueba",
-    "email": "docente.prueba@comunidadia.edu",
-    "password": "pbkdf2_sha256$720000$L0O49ZSQMalhScHNfu512a$QCCLNdgP5IeBCgEyQL5WQAdhwp7FVO+cZ84IJrBFykE=",
-    "role": "EDUCATOR",
-    "is_verified": false
-  }
-},
-{
-  "model": "core.user",
-  "pk": 4,
-  "fields": {
-    "name": "Luis",
-    "email": "lfmayorgatib@gmail.com",
-    "password": "pbkdf2_sha256$720000$CKyJI2VEuZeqEDowGLpG1y$3+7cfFscxsbYJbvgkixPNF4fd7AjkG9Y4YmXW4YwQ8A=",
-    "role": "EDUCATOR",
-    "is_verified": false
-  }
-},
-{
-  "model": "core.educator",
-  "pk": 1,
-  "fields": {
-    "nick_name": "educador_demo",
-    "user": 1,
-    "bio": "",
-    "institution": "",
-    "specialty": "",
-    "avatar": "",
-    "website": "",
-    "linkedin_url": ""
-  }
-},
-{
-  "model": "core.educator",
-  "pk": 3,
-  "fields": {
-    "nick_name": "docente_prueba",
-    "user": 3,
-    "bio": "",
-    "institution": "",
-    "specialty": "",
-    "avatar": "",
-    "website": "",
-    "linkedin_url": ""
-  }
-},
-{
-  "model": "core.educator",
-  "pk": 4,
-  "fields": {
-    "nick_name": "Mayorga",
-    "user": 4,
-    "bio": "",
-    "institution": "",
-    "specialty": "",
-    "avatar": "",
-    "website": "",
-    "linkedin_url": ""
-  }
-},
-{
-  "model": "core.refreshtoken",
-  "pk": 2,
-  "fields": {
-    "user": 2,
-    "token": "eCPmnrGyP8yx_GJ4zj2__eeB0EsAfFyHb4JfnRiTNh_WYr4fSY1KCKDpIhBkHcmXDJ2MApJCNdfZCLEs3iU3RA",
-    "expiry_date": "2026-10-11T15:31:35.761Z"
-  }
-},
-{
-  "model": "core.emailverificationtoken",
-  "pk": 1,
-  "fields": {
-    "user": 3,
-    "code": "475866",
-    "token": "GKGigoYG9CPn85j-8tj5C-IU_s2OWdu9VFYkgBKZp2w",
-    "created_at": "2026-10-04T18:13:54.036Z",
-    "expires_at": "2026-10-05T18:13:54.035Z",
-    "is_used": false
-  }
-},
-{
-  "model": "core.emailverificationtoken",
-  "pk": 2,
-  "fields": {
-    "user": 4,
-    "code": "280976",
-    "token": "t4gifejxxi_bnjlc3yC3MWAu_prJDhs0u6VpVIHnm8c",
-    "created_at": "2026-10-04T18:16:34.800Z",
-    "expires_at": "2026-10-05T18:16:34.798Z",
-    "is_used": false
-  }
-}
 ]

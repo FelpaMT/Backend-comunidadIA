@@ -1,5 +1,5 @@
 asgiref==3.10.0
-google-generativeai==0.8.6
+google-genai==2.29.0
 astroid==4.0.2
 attrs==25.4.0
 dill==0.4.0
@@ -16,6 +16,7 @@ jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
 mccabe==0.7.0
 pillow==12.0.0
+nh3==0.3.2
 platformdirs==4.5.1
 psycopg2-binary>=2.9.10
 pydotplus==2.0.2

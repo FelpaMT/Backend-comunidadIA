@@ -2,16 +2,18 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env", override=True)
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
-DEBUG = os.getenv("DJANGO_DEBUG", "True") == "True"
-ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS").split(",")
-#New Line
-PUBLIC_ROOT = os.getenv("PUBLIC_ROOT")
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "local-only-insecure-key-change-before-deploy")
+DEBUG = os.getenv("DJANGO_DEBUG", "False") == "True"
+if not DEBUG and (not SECRET_KEY or len(SECRET_KEY) < 50 or SECRET_KEY.startswith("replace-with")):
+    raise ImproperlyConfigured("Set a unique DJANGO_SECRET_KEY in production.")
+ALLOWED_HOSTS = [host.strip() for host in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if host.strip()]
+PUBLIC_ROOT = os.getenv("PUBLIC_ROOT", str(BASE_DIR / "media"))
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -30,12 +32,15 @@ INSTALLED_APPS = [
 
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000",
+    ).split(",")
+    if origin.strip()
 ]
-CORS_ALLOW_HEADERS = ["*"]
-CORS_ALLOW_METHODS = ["*"]
+CORS_ALLOW_HEADERS = ["accept", "authorization", "content-type", "origin", "x-csrftoken"]
+CORS_ALLOW_METHODS = ["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"]
 CORS_ALLOW_CREDENTIALS = True
 
 MIDDLEWARE = [
@@ -67,20 +72,26 @@ TEMPLATES = [{
 
 WSGI_APPLICATION = "comunidadai_api.wsgi.application"
 
-USE_POSTGRES = os.getenv("USE_POSTGRES", "False") == "True"
+USE_POSTGRES = os.getenv("USE_POSTGRES", "False" if DEBUG else "True") == "True"
 
 if USE_POSTGRES:
+    required_db_settings = ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST")
+    missing_db_settings = [key for key in required_db_settings if not os.getenv(key)]
+    if missing_db_settings:
+        raise ImproperlyConfigured("Missing PostgreSQL settings: " + ", ".join(missing_db_settings))
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("DB_NAME", "comunidadai_db"),
-            "USER": os.getenv("DB_USER", "postgres"),
-            "PASSWORD": os.getenv("DB_PASSWORD", "postgres"),
-            "HOST": os.getenv("DB_HOST", "127.0.0.1"),
+            "NAME": os.getenv("DB_NAME"),
+            "USER": os.getenv("DB_USER"),
+            "PASSWORD": os.getenv("DB_PASSWORD"),
+            "HOST": os.getenv("DB_HOST"),
             "PORT": os.getenv("DB_PORT", "5432"),
         }
     }
 else:
+    if not DEBUG:
+        raise ImproperlyConfigured("Enable PostgreSQL for non-debug deployments by setting USE_POSTGRES=True.")
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -88,7 +99,12 @@ else:
         }
     }
 
-AUTH_PASSWORD_VALIDATORS = []  # simple para desarrollo
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 12}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
 
 LANGUAGE_CODE = "es"
 TIME_ZONE = "America/Bogota"
@@ -101,6 +117,19 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DOMAIN = os.getenv("DOMAIN")
 MEDIA_URL = "/comunidadia_uploads/"
 MEDIA_ROOT = os.path.join(PUBLIC_ROOT, "comunidadia_uploads")
+MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", str(5 * 1024 * 1024)))
+DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE
+REFRESH_COOKIE_NAME = "comunidadia_refresh"
+REFRESH_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "False" if DEBUG else "True") == "True"
+REFRESH_COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "Lax")
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False" if DEBUG else "True") == "True"
+SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0" if DEBUG else "31536000"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "False") == "True"
+SECURE_HSTS_PRELOAD = os.getenv("SECURE_HSTS_PRELOAD", "False") == "True"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

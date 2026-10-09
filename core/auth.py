@@ -34,6 +34,9 @@ class JWTAuthenticationCustom(BaseAuthentication):
         except Exception:
             raise exceptions.AuthenticationFailed(_('Invalid or expired token.'))
 
+        if payload.get("type") != "access":
+            raise exceptions.AuthenticationFailed(_('Invalid token type.'))
+
         user_id = payload.get('sub')
         if not user_id:
             raise exceptions.AuthenticationFailed(_('Invalid token payload.'))
@@ -41,6 +44,8 @@ class JWTAuthenticationCustom(BaseAuthentication):
         user = User.objects.filter(id=user_id).first()
         if not user:
             raise exceptions.AuthenticationFailed(_('User not found.'))
+        if not user.is_verified and user.role != "ADMIN":
+            raise exceptions.AuthenticationFailed(_('Email address is not verified.'))
 
         return (user, None)
 

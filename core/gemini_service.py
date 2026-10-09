@@ -1,4 +1,6 @@
-import google.generativeai as genai
+import logging
+from google import genai
+from google.genai import types
 from django.conf import settings
 from .models import Publication
 
@@ -8,6 +10,7 @@ SYSTEM_INSTRUCTION = (
     "y profesionales a comprender, aplicar y reflexionar sobre la IA en el ámbito educativo. "
     "Responde siempre en español formateado en Markdown claro y estructurado."
 )
+logger = logging.getLogger(__name__)
 
 def generate_chat_response(message: str, publication_id: int | str | None = None, history: list = None) -> dict:
     """
@@ -33,7 +36,7 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
             "context_used": False
         }
     
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
     
     context_used = False
     context_text = ""
@@ -84,7 +87,7 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
                 role = "user"
             
             if content:
-                gemini_history.append({"role": role, "parts": [content]})
+                gemini_history.append({"role": role, "parts": [{"text": content}]})
                 
     model_name = getattr(settings, "GEMINI_MODEL_NAME", "gemini-3.8-flash") or os.getenv("GEMINI_MODEL_NAME", "gemini-3.8-flash")
     full_system_instruction = SYSTEM_INSTRUCTION + context_text
@@ -95,29 +98,27 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
     models_to_try = [m for m in candidate_models if not (m in seen or seen.add(m))]
 
     last_exception = None
-    for m_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(
-                model_name=m_name,
-                system_instruction=full_system_instruction,
-            )
-            chat = model.start_chat(history=gemini_history)
-            res = chat.send_message(message)
-            return {
-                "response": res.text,
-                "context_used": context_used
-            }
-        except Exception as e:
-            last_exception = e
-            err_str = str(e)
-            if "429" in err_str or "Quota exceeded" in err_str or "rate-limits" in err_str:
-                return {
-                    "response": "El Asistente IA está recibiendo muchas consultas simultáneas en este momento. Por favor, espera 15 segundos y vuelve a enviar tu pregunta.",
-                    "context_used": context_used
-                }
-            print(f"[GeminiService] Model '{m_name}' failed: {e}. Trying next model...")
+    try:
+        contents = [*gemini_history, {"role": "user", "parts": [{"text": message}]}]
+        for m_name in models_to_try:
+            try:
+                result = client.models.generate_content(
+                    model=m_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(system_instruction=full_system_instruction),
+                )
+                return {"response": result.text or "No se recibió texto del asistente.", "context_used": context_used}
+            except Exception as exc:
+                last_exception = exc
+                error_text = str(exc).lower()
+                if "429" in error_text or "quota exceeded" in error_text or "rate-limits" in error_text:
+                    return {
+                        "response": "El Asistente IA está recibiendo muchas consultas simultáneas. Por favor, espera y vuelve a intentarlo.",
+                        "context_used": context_used,
+                    }
+                logger.warning("Gemini model %s failed: %s", m_name, type(exc).__name__)
 
-    return {
-        "response": f"Lo siento, ocurrió un problema al consultar el servicio de IA: {str(last_exception)}",
-        "context_used": context_used
-    }
+        logger.error("All configured Gemini models failed: %s", type(last_exception).__name__ if last_exception else "unknown")
+        return {"response": "No fue posible consultar el Asistente IA en este momento.", "context_used": context_used}
+    finally:
+        client.close()

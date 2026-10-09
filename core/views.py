@@ -1,3 +1,5 @@
+import logging
+from django.db import transaction
 from django.db.models import Q, F
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
@@ -37,6 +39,8 @@ from .email_utils import (
 )
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
+
+logger = logging.getLogger(__name__)
 
 # -------- Helpers --------
 def require_offset_limit(request):
@@ -97,13 +101,21 @@ class AuthSignupView(APIView):
 
         ser = UserCreateSerializer(data=data)
         if ser.is_valid():
-            user = ser.save()
-            user.is_verified = False
-            user.save(update_fields=["is_verified"])
+            try:
+                with transaction.atomic():
+                    user = ser.save()
+                    user.is_verified = False
+                    user.save(update_fields=["is_verified"])
 
-            # Generar token y enviar correo de verificación
-            ver_token = create_email_verification_token(user)
-            send_verification_email(user, ver_token)
+                    # No dejar cuentas imposibles de verificar si el proveedor SMTP falla.
+                    ver_token = create_email_verification_token(user)
+                    send_verification_email(user, ver_token)
+            except Exception:
+                logger.exception("Signup failed while creating account or sending verification email")
+                return Response(
+                    {"detail": "No se pudo completar el registro ni enviar el correo. Inténtalo de nuevo más tarde."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
 
             return Response({
                 "detail": "Usuario registrado exitosamente. Por favor verifica tu correo electrónico con el código enviado.",
@@ -186,7 +198,14 @@ class AuthResendVerificationView(APIView):
             return Response({"detail": "Esta cuenta ya se encuentra verificada."}, status=400)
 
         ver_token = create_email_verification_token(user)
-        send_verification_email(user, ver_token)
+        try:
+            send_verification_email(user, ver_token)
+        except Exception:
+            logger.exception("Failed to send verification email")
+            return Response(
+                {"detail": "No se pudo enviar el correo de verificación. Inténtalo de nuevo más tarde."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return Response({"detail": "Nuevo código de verificación enviado a tu correo."}, status=200)
 
 class AuthForgotPasswordView(APIView):
@@ -208,7 +227,11 @@ class AuthForgotPasswordView(APIView):
         user = User.objects.filter(email__iexact=email).first()
         if user:
             reset_token = create_password_reset_token(user)
-            send_password_reset_email(user, reset_token)
+            try:
+                send_password_reset_email(user, reset_token)
+            except Exception:
+                # Keep the same response to avoid revealing whether an account exists.
+                logger.exception("Failed to send password reset email")
 
         return Response({
             "detail": "Si el correo está registrado, recibirás un enlace de recuperación en los próximos minutos."

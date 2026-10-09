@@ -1,4 +1,3 @@
-import os
 import secrets
 from datetime import timedelta
 from django.utils import timezone
@@ -43,16 +42,13 @@ Este código es válido por 24 horas.
 Saludos,
 El equipo de ComunidadIA
 """
-    try:
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
-    except Exception as e:
-        print(f"Error enviando correo de verificación: {e}")
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        fail_silently=False,
+    )
 
 def create_password_reset_token(user: User):
     token = secrets.token_urlsafe(32)
@@ -82,13 +78,10 @@ Este enlace es de un solo uso y expirará en 30 minutos. Si no solicitaste este 
 Saludos,
 El equipo de ComunidadIA
 """
-    try:
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
-    except Exception as e:
-        print(f"Error enviando correo de recuperación: {e}")
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        fail_silently=False,
+    )

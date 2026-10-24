@@ -21,14 +21,10 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
     :param history: Historial conversacional previo [{'role': 'user'|'model', 'content': '...'}].
     :return: dict con 'response' y 'context_used'.
     """
-    import os
-    api_key = getattr(settings, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        # Intentar cargar .env si no fue cargado previamente
-        from dotenv import load_dotenv
-        from pathlib import Path
-        load_dotenv(Path(settings.BASE_DIR) / ".env", override=True)
-        api_key = os.getenv("GEMINI_API_KEY", "")
+    # Las variables de entorno se cargan una sola vez en settings.py.
+    # No volver a leer .env aquí: override=True podría cambiar ajustes globales
+    # del proceso en tiempo de petición.
+    api_key = getattr(settings, "GEMINI_API_KEY", "")
 
     if not api_key:
         return {

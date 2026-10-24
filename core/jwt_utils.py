@@ -4,6 +4,7 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 from .models import RefreshToken, User
 import secrets
+from .security import digest_one_time_secret
 
 def _now():
     return timezone.now()
@@ -24,7 +25,8 @@ def generate_and_store_refresh(user: User):
     exp = _now() + settings.JWT_CONFIG["REFRESH_LIFETIME"]
     token = secrets.token_urlsafe(64)
     RefreshToken.objects.update_or_create(
-        user=user, defaults={"token": token, "expiry_date": exp}
+        user=user,
+        defaults={"token": digest_one_time_secret("refresh", token), "expiry_date": exp},
     )
     return token, exp
 

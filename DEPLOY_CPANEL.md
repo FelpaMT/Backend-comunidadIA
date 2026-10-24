@@ -55,6 +55,8 @@ python manage.py check --deploy
 python manage.py create_api_admin
 ```
 
+La migración `0008` elimina los refresh tokens y enlaces/códigos que estaban guardados en texto plano. Después de aplicarla, las sesiones existentes deberán iniciar sesión de nuevo y las cuentas pendientes podrán solicitar otro código de verificación.
+
 `create_api_admin` crea el usuario `ADMIN` de la API de forma interactiva y valida su contraseña. Es distinto al superusuario de Django Admin (`createsuperuser`). No cargues `initial_data.json` en producción: contiene datos de ejemplo, no cuentas con contraseñas utilizables.
 
 En cPanel, reinicia la aplicación Passenger después de instalar dependencias, editar variables o publicar una versión nueva.

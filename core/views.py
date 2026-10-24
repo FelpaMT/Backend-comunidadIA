@@ -1,5 +1,6 @@
 import logging
 from django.db import transaction
+from urllib.parse import urlsplit
 from django.db.models import Q, F
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone
@@ -32,6 +33,7 @@ from .serializers import (
 from .gemini_service import generate_chat_response
 from .permissions import IsAdmin, IsOwnerEducatorObject
 from .jwt_utils import generate_access_token, generate_and_store_refresh
+from .security import digest_one_time_secret
 from .storage import save_publication_html, update_publication_html, get_publication_html
 from .email_utils import (
     create_email_verification_token, send_verification_email,
@@ -41,6 +43,16 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 
 logger = logging.getLogger(__name__)
+
+
+def _is_trusted_browser_origin(request):
+    """Protect cookie-authenticated POST routes against cross-site requests."""
+    origin = request.headers.get("Origin", "").rstrip("/")
+    if not origin:
+        referer = request.headers.get("Referer", "")
+        parsed = urlsplit(referer)
+        origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+    return bool(origin and origin in settings.CORS_ALLOWED_ORIGINS)
 
 # -------- Helpers --------
 def require_offset_limit(request):
@@ -108,8 +120,8 @@ class AuthSignupView(APIView):
                     user.save(update_fields=["is_verified"])
 
                     # No dejar cuentas imposibles de verificar si el proveedor SMTP falla.
-                    ver_token = create_email_verification_token(user)
-                    send_verification_email(user, ver_token)
+                    issued = create_email_verification_token(user)
+                    send_verification_email(user, issued)
             except Exception:
                 logger.exception("Signup failed while creating account or sending verification email")
                 return Response(
@@ -149,20 +161,27 @@ class AuthVerifyEmailView(APIView):
         if user.is_verified:
             return Response({"detail": "Tu cuenta ya está verificada. Inicia sesión para continuar."}, status=200)
 
-        ver_token = None
-        if token:
-            ver_token = EmailVerificationToken.objects.filter(user=user, token=token).first()
-        elif code:
-            ver_token = EmailVerificationToken.objects.filter(user=user, code=code).first()
+        token_digest = digest_one_time_secret("email-verification", token) if token else None
+        code_digest = digest_one_time_secret("email-code", code) if code else None
+        with transaction.atomic():
+            ver_token = EmailVerificationToken.objects.select_for_update().filter(
+                user=user, is_used=False
+            ).order_by("-created_at").first()
+            if not ver_token or not ver_token.is_valid() or ver_token.attempts >= 5:
+                return Response({"detail": "Código o enlace de verificación inválido o expirado."}, status=400)
+            matches = (
+                ver_token.token == token_digest if token_digest
+                else ver_token.code == code_digest
+            )
+            if not matches:
+                ver_token.attempts += 1
+                ver_token.save(update_fields=["attempts"])
+                return Response({"detail": "Código o enlace de verificación inválido o expirado."}, status=400)
 
-        if not ver_token or not ver_token.is_valid():
-            return Response({"detail": "Código o enlace de verificación inválido o expirado."}, status=400)
-
-        ver_token.is_used = True
-        ver_token.save(update_fields=["is_used"])
-
-        user.is_verified = True
-        user.save(update_fields=["is_verified"])
+            ver_token.is_used = True
+            ver_token.save(update_fields=["is_used"])
+            user.is_verified = True
+            user.save(update_fields=["is_verified"])
 
         access = generate_access_token(user)
         refresh, _ = generate_and_store_refresh(user)
@@ -197,9 +216,9 @@ class AuthResendVerificationView(APIView):
         if user.is_verified:
             return Response({"detail": "Esta cuenta ya se encuentra verificada."}, status=400)
 
-        ver_token = create_email_verification_token(user)
+        issued = create_email_verification_token(user)
         try:
-            send_verification_email(user, ver_token)
+            send_verification_email(user, issued)
         except Exception:
             logger.exception("Failed to send verification email")
             return Response(
@@ -226,9 +245,9 @@ class AuthForgotPasswordView(APIView):
 
         user = User.objects.filter(email__iexact=email).first()
         if user:
-            reset_token = create_password_reset_token(user)
+            issued = create_password_reset_token(user)
             try:
-                send_password_reset_email(user, reset_token)
+                send_password_reset_email(user, issued)
             except Exception:
                 # Keep the same response to avoid revealing whether an account exists.
                 logger.exception("Failed to send password reset email")
@@ -254,21 +273,23 @@ class AuthResetPasswordView(APIView):
         token_str = ser.validated_data["token"].strip()
         new_pwd = ser.validated_data["new_password"]
 
-        reset_token = PasswordResetToken.objects.filter(token=token_str).first()
-        if not reset_token or not reset_token.is_valid():
-            return Response({"detail": "El enlace de recuperación es inválido o ha expirado."}, status=400)
+        token_digest = digest_one_time_secret("password-reset", token_str)
+        with transaction.atomic():
+            reset_token = PasswordResetToken.objects.select_for_update().filter(token=token_digest).first()
+            if not reset_token or not reset_token.is_valid():
+                return Response({"detail": "El enlace de recuperación es inválido o ha expirado."}, status=400)
 
-        user = reset_token.user
-        try:
-            validate_password(new_pwd, user)
-        except DjangoValidationError as exc:
-            return Response({"new_password": list(exc.messages)}, status=400)
-        user.set_password(new_pwd)
-        user.save(update_fields=["password"])
-        RefreshToken.objects.filter(user=user).delete()
+            user = reset_token.user
+            try:
+                validate_password(new_pwd, user)
+            except DjangoValidationError as exc:
+                return Response({"new_password": list(exc.messages)}, status=400)
+            user.set_password(new_pwd)
+            user.save(update_fields=["password"])
+            RefreshToken.objects.filter(user=user).delete()
 
-        reset_token.is_used = True
-        reset_token.save(update_fields=["is_used"])
+            reset_token.is_used = True
+            reset_token.save(update_fields=["is_used"])
 
         return Response({
             "detail": "Contraseña actualizada exitosamente. Ya puedes iniciar sesión con tu nueva contraseña."
@@ -293,8 +314,8 @@ class AuthLoginView(APIView):
             return Response({"detail":"Credenciales inválidas"}, status=401)
         if not user.is_verified and user.role != Role.ADMIN:
             # Reenviar token si es necesario
-            ver_token = create_email_verification_token(user)
-            send_verification_email(user, ver_token)
+            issued = create_email_verification_token(user)
+            send_verification_email(user, issued)
             return Response({
                 "detail": "Debes verificar tu correo electrónico antes de iniciar sesión. Hemos enviado un nuevo código a tu correo.",
                 "requires_verification": True,
@@ -308,6 +329,7 @@ class AuthLoginView(APIView):
 class AuthLogoutView(APIView):
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
 
     @extend_schema(
         tags=["Auth"],
@@ -316,11 +338,13 @@ class AuthLogoutView(APIView):
         description="Elimina el refresh token en DB para invalidar sesiones."
     )
     def post(self, request):
+        if not _is_trusted_browser_origin(request):
+            return Response({"detail": "Origen no permitido."}, status=403)
         token = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
         if not token:
             return _clear_refresh_cookie(Response({"detail": "Sesión cerrada"}, status=200))
 
-        ref = RefreshToken.objects.filter(token=token).first()
+        ref = RefreshToken.objects.filter(token=digest_one_time_secret("refresh", token)).first()
         if ref:
             ref.delete()
         return _clear_refresh_cookie(Response({"detail": "OK"}, status=200))
@@ -328,6 +352,7 @@ class AuthLogoutView(APIView):
 class AuthRefreshView(APIView):
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
 
     @extend_schema(
         tags=["Auth"],
@@ -336,20 +361,25 @@ class AuthRefreshView(APIView):
         description="Recibe access_token y retorna uno nuevo (usa refresh guardado en DB)."
     )
     def post(self, request):
+        if not _is_trusted_browser_origin(request):
+            return Response({"detail": "Origen no permitido."}, status=403)
         refresh_token = request.COOKIES.get(settings.REFRESH_COOKIE_NAME)
         if not refresh_token:
             return _clear_refresh_cookie(Response({"detail": "Sesión no disponible"}, status=401))
 
-        ref = RefreshToken.objects.filter(token=refresh_token).first()
-        if not ref:
-            return Response({"detail": "Refresh token inválido"}, status=401)
-        if ref.expiry_date <= timezone.now():
-            ref.delete()
-            return _clear_refresh_cookie(Response({"detail": "Refresh token expirado"}, status=401))
+        with transaction.atomic():
+            ref = RefreshToken.objects.select_for_update().filter(
+                token=digest_one_time_secret("refresh", refresh_token)
+            ).first()
+            if not ref:
+                return Response({"detail": "Refresh token inválido"}, status=401)
+            if ref.expiry_date <= timezone.now():
+                ref.delete()
+                return _clear_refresh_cookie(Response({"detail": "Refresh token expirado"}, status=401))
 
-        user = ref.user
-        new_refresh, _ = generate_and_store_refresh(user)
-        new_access = generate_access_token(user)
+            user = ref.user
+            new_refresh, _ = generate_and_store_refresh(user)
+            new_access = generate_access_token(user)
         response = Response({"new_access_token": new_access}, status=200)
         return _set_refresh_cookie(response, new_refresh)
 

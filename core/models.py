@@ -153,15 +153,18 @@ class Subscription(models.Model):
 
 class RefreshToken(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="refresh_token")
-    token = models.CharField(max_length=512, unique=True)
+    # Only a keyed digest is stored; the raw bearer token exists only in the cookie.
+    token = models.CharField(max_length=64, unique=True)
     expiry_date = models.DateTimeField()
 
 class EmailVerificationToken(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="email_verification_tokens")
-    code = models.CharField(max_length=6)
-    token = models.CharField(max_length=128, unique=True)
+    # HMAC digests prevent a database-only leak from exposing active codes/links.
+    code = models.CharField(max_length=64)
+    token = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
     is_used = models.BooleanField(default=False)
 
     def is_valid(self):
@@ -169,7 +172,7 @@ class EmailVerificationToken(models.Model):
 
 class PasswordResetToken(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_reset_tokens")
-    token = models.CharField(max_length=128, unique=True)
+    token = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)

@@ -1,4 +1,5 @@
 import os
+import stat
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
@@ -7,6 +8,24 @@ from django.core.exceptions import ImproperlyConfigured
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env", override=False)
+
+# Shared by Passenger workers on this host so DRF throttles are not isolated
+# to one process. Keep the cache outside the public document root.
+CACHE_DIR = Path(os.getenv("DJANGO_CACHE_DIR", str(BASE_DIR / ".cache"))).expanduser().resolve()
+CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+try:
+    CACHE_DIR.chmod(stat.S_IRWXU)
+except OSError:
+    # Windows and some hosted filesystems do not support POSIX mode changes.
+    pass
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+        "LOCATION": str(CACHE_DIR),
+        "OPTIONS": {"MAX_ENTRIES": 10000},
+        "TIMEOUT": 300,
+    }
+}
 
 DEBUG = os.getenv("DJANGO_DEBUG", "False") == "True"
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "local-only-insecure-key-change-before-deploy")
@@ -22,6 +41,12 @@ if not DEBUG and not public_root:
 PUBLIC_ROOT = Path(public_root).expanduser().resolve() if public_root else BASE_DIR / "public"
 if not DEBUG and (PUBLIC_ROOT == BASE_DIR or PUBLIC_ROOT in BASE_DIR.parents or BASE_DIR in PUBLIC_ROOT.parents):
     raise ImproperlyConfigured("Keep the backend source and frontend document root in separate directories.")
+try:
+    CACHE_DIR.relative_to(PUBLIC_ROOT)
+except ValueError:
+    pass
+else:
+    raise ImproperlyConfigured("Keep the Django cache directory outside the public document root.")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -141,6 +166,7 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False" if DEBUG else "True") == "True"
 # Enable HSTS only after HTTPS has been confirmed on every production hostname.
 SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))

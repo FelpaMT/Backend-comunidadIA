@@ -842,8 +842,11 @@ class PublicationMeUpdateView(APIView):
         ser.is_valid()
         if not ser.is_valid():
             return Response(ser.errors, status=400)
-        edu = request.user.educator
-        pub = Publication.objects.filter(id=publication_id, educator=edu).first()
+        edu = getattr(request.user, "educator", None)
+        if getattr(request.user, "role", None) == Role.ADMIN:
+            pub = Publication.objects.filter(id=publication_id).first()
+        else:
+            pub = Publication.objects.filter(id=publication_id, educator=edu).first()
         if not pub:
             return Response({"detail":"No existe o no es tuya"}, status=404)
         if "title" in request.data: pub.title = request.data["title"]
@@ -870,8 +873,11 @@ class PublicationMeDeleteView(APIView):
 
     @extend_schema(tags=["Publications (Me)"], request=None, responses={204: None})
     def delete(self, request, publication_id):
-        edu = request.user.educator
-        pub = Publication.objects.filter(id=publication_id, educator=edu).first()
+        edu = getattr(request.user, "educator", None)
+        if getattr(request.user, "role", None) == Role.ADMIN:
+            pub = Publication.objects.filter(id=publication_id).first()
+        else:
+            pub = Publication.objects.filter(id=publication_id, educator=edu).first()
         if not pub:
             return Response({"detail":"No existe o no es tuya"}, status=404)
         pub.delete()
@@ -939,8 +945,11 @@ class CommentaryMeDeleteView(APIView):
 
     @extend_schema(tags=["Commentary (Me)"], request=None, responses={204: None})
     def delete(self, request, commentary_id):
-        edu = request.user.educator
-        com = Commentary.objects.filter(id=commentary_id, educator=edu).first()
+        edu = getattr(request.user, "educator", None)
+        if getattr(request.user, "role", None) == Role.ADMIN:
+            com = Commentary.objects.filter(id=commentary_id).first()
+        else:
+            com = Commentary.objects.filter(id=commentary_id, educator=edu).first()
         if not com: return Response({"detail":"No existe o no es tuyo"}, status=404)
         com.delete()
         return Response(status=204)

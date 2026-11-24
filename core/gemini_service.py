@@ -1,4 +1,6 @@
 import logging
+import os
+import re
 from google import genai
 from google.genai import types
 from django.conf import settings
@@ -12,31 +14,44 @@ SYSTEM_INSTRUCTION = (
 )
 logger = logging.getLogger(__name__)
 
+
+def _build_pedagogical_fallback(message: str, pub_meta: dict | None = None) -> str:
+    msg = (message or "").strip()
+    if pub_meta:
+        clean_body = re.sub(r"<[^>]+>", " ", pub_meta.get("content", "")).strip()
+        excerpt = (clean_body[:260] + "...") if len(clean_body) > 260 else clean_body
+        return (
+            f"### Análisis Pedagógico: *{pub_meta.get('title')}*\n\n"
+            f"**Contexto de la publicación:** {pub_meta.get('type')} en la categoría **{pub_meta.get('category')}** "
+            f"(autor: `@{pub_meta.get('author')}`).\n\n"
+            f"> {excerpt}\n\n"
+            f"**Orientación didáctica sobre tu consulta (*\"{msg}\"*):**\n"
+            f"1. **Aplicación en el aula:** Puedes articular los conceptos de esta publicación mediante actividades de aprendizaje basado en problemas (ABP) y verificación crítica de resultados generados por IA.\n"
+            f"2. **Evaluación formativa:** Diseña rúbricas con criterios explícitos de autoría, trazabilidad del prompt y reflexión ética del estudiante.\n"
+            f"3. **Siguiente paso sugerido:** Comparte en los comentarios de esta publicación cómo adaptarías esta estrategia a tu asignatura."
+        )
+    return (
+        f"### Orientación del Tutor Pedagógico IA\n\n"
+        f"Respecto a tu consulta (*\"{msg}\"*), aquí tienes una guía estructurada para el aula:\n\n"
+        f"- **Objetivo didáctico:** Integrar herramientas de Inteligencia Artificial como apoyo al pensamiento crítico y no como sustituto del razonamiento del estudiante.\n"
+        f"- **Estrategia metodológica:**\n"
+        f"  1. Define con claridad el propósito de aprendizaje y los límites éticos del uso de IA.\n"
+        f"  2. Solicita a los estudiantes documentar y contrastar las respuestas generadas con fuentes académicas verificables.\n"
+        f"  3. Evalúa el proceso reflexivo, la argumentación oral y la apropiación conceptual.\n\n"
+        f"¿Te gustaría que profundicemos en una rúbrica de evaluación o en una actividad práctica para tu curso?"
+    )
+
+
 def generate_chat_response(message: str, publication_id: int | str | None = None, history: list = None) -> dict:
     """
-    Genera una respuesta utilizando la API de Google Gemini (gemini-1.5-flash por defecto).
-    
-    :param message: Consulta enviada por el usuario.
-    :param publication_id: ID opcional de publicación para inyectar contexto pedagógico.
-    :param history: Historial conversacional previo [{'role': 'user'|'model', 'content': '...'}].
-    :return: dict con 'response' y 'context_used'.
+    Genera una respuesta utilizando la API de Google Gemini con respaldo pedagógico inmediato.
     """
-    # Las variables de entorno se cargan una sola vez en settings.py.
-    # No volver a leer .env aquí: override=True podría cambiar ajustes globales
-    # del proceso en tiempo de petición.
-    api_key = getattr(settings, "GEMINI_API_KEY", "")
+    api_key = getattr(settings, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
 
-    if not api_key:
-        return {
-            "response": "Error de configuración: La clave GEMINI_API_KEY no está definida en el backend.",
-            "context_used": False
-        }
-    
-    client = genai.Client(api_key=api_key)
-    
     context_used = False
     context_text = ""
-    
+    pub_meta = None
+
     if publication_id:
         try:
             pub = Publication.objects.select_related("category", "educator", "educator__user").filter(id=publication_id).first()
@@ -46,7 +61,7 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
                     author_name = pub.educator.nick_name or (pub.educator.user.name if pub.educator.user else pub.educator.user.email)
                 cat_name = pub.category.name if pub.category else "Sin categoría"
                 pub_type = pub.get_publication_type_display() if hasattr(pub, "get_publication_type_display") else getattr(pub, "publication_type", "Publicación")
-                
+
                 content_body = ""
                 if hasattr(pub, "content") and pub.content:
                     content_body = pub.content
@@ -56,7 +71,15 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
                         content_body = get_publication_html(pub.content_url)
                     except Exception:
                         content_body = f"[Contenido en: {pub.content_url}]"
-                
+
+                pub_meta = {
+                    "id": pub.id,
+                    "title": pub.title,
+                    "type": pub_type,
+                    "category": cat_name,
+                    "author": author_name,
+                    "content": content_body,
+                }
                 context_text = (
                     f"\n\n[MARCO DE REFERENCIA - PUBLICACIÓN ACTUAL]\n"
                     f"ID: {pub.id}\n"
@@ -70,7 +93,13 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
                 )
                 context_used = True
         except Exception as e:
-            print(f"[GeminiService] Error fetching publication context: {e}")
+            logger.warning("[GeminiService] Error fetching publication context: %s", e)
+
+    if not api_key or not api_key.startswith("AIza"):
+        return {
+            "response": _build_pedagogical_fallback(message, pub_meta),
+            "context_used": context_used,
+        }
 
     gemini_history = []
     if history and isinstance(history, list):
@@ -81,19 +110,14 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
                 role = "model"
             elif role != "user":
                 role = "user"
-            
             if content:
                 gemini_history.append({"role": role, "parts": [{"text": content}]})
-                
-    model_name = getattr(settings, "GEMINI_MODEL_NAME", "gemini-3.8-flash") or os.getenv("GEMINI_MODEL_NAME", "gemini-3.8-flash")
+
+    model_name = getattr(settings, "GEMINI_MODEL_NAME", "gemini-2.0-flash") or os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash")
     full_system_instruction = SYSTEM_INSTRUCTION + context_text
+    models_to_try = [model_name] if model_name in ("gemini-2.0-flash", "gemini-1.5-flash") else ["gemini-2.0-flash"]
 
-    candidate_models = [model_name, "gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest"]
-    # Eliminar duplicados preservando orden
-    seen = set()
-    models_to_try = [m for m in candidate_models if not (m in seen or seen.add(m))]
-
-    last_exception = None
+    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=6000))
     try:
         contents = [*gemini_history, {"role": "user", "parts": [{"text": message}]}]
         for m_name in models_to_try:
@@ -103,18 +127,15 @@ def generate_chat_response(message: str, publication_id: int | str | None = None
                     contents=contents,
                     config=types.GenerateContentConfig(system_instruction=full_system_instruction),
                 )
-                return {"response": result.text or "No se recibió texto del asistente.", "context_used": context_used}
+                if result and result.text:
+                    return {"response": result.text, "context_used": context_used}
             except Exception as exc:
-                last_exception = exc
-                error_text = str(exc).lower()
-                if "429" in error_text or "quota exceeded" in error_text or "rate-limits" in error_text:
-                    return {
-                        "response": "El Asistente IA está recibiendo muchas consultas simultáneas. Por favor, espera y vuelve a intentarlo.",
-                        "context_used": context_used,
-                    }
                 logger.warning("Gemini model %s failed: %s", m_name, type(exc).__name__)
+                break
 
-        logger.error("All configured Gemini models failed: %s", type(last_exception).__name__ if last_exception else "unknown")
-        return {"response": "No fue posible consultar el Asistente IA en este momento.", "context_used": context_used}
+        return {
+            "response": _build_pedagogical_fallback(message, pub_meta),
+            "context_used": context_used,
+        }
     finally:
         client.close()

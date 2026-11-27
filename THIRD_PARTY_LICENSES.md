@@ -77,3 +77,4 @@ Todas las dependencias de terceros del backend corresponden a bibliotecas de có
 | `globals` | `^16.5.0` | Desarrollo / Lint | `MIT` | Diccionario de variables globales de entornos Browser y ES2021+. |
 | `@types/react` | `^19.2.5` | Desarrollo | `MIT` | Definiciones de tipos TypeScript para el núcleo de React. |
 | `@types/react-dom` | `^19.2.3` | Desarrollo | `MIT` | Definiciones de tipos TypeScript para `react-dom`. |
+| `cypress` | `^16.4.0` | Desarrollo / Pruebas E2E | `MIT` | Framework de pruebas automatizadas *End-to-End* en navegador (20 casos E2E en 5 suites). |
